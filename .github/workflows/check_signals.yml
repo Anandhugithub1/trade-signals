@@ -1,0 +1,29 @@
+name: Check Trade Signals
+
+on:
+  schedule:
+    - cron: '0 0 * * *'   # runs every day at midnight UTC
+  workflow_dispatch:        # lets you trigger it manually from GitHub UI
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r backend/check_signals/requirements.txt
+
+      - name: Run signal checker
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python backend/check_signals/handler.py
