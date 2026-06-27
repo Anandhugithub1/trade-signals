@@ -38,7 +38,7 @@ class TradeSignal {
 
 enum SignalDirection { long, short }
 
-enum SignalResult { pending, win, loss }
+enum SignalResult { pending, win, loss, expired }
 
 // Only signals within the last 90 days are retained
 final DateTime _cutoff = DateTime.now().subtract(const Duration(days: 90));

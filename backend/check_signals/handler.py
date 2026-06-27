@@ -1,7 +1,18 @@
 """
 check_signals — Lambda-style cron handler
-Fetches all pending trade signals from Supabase, checks Binance hourly
-candles to see if Stop Loss or Take Profit was hit, then updates the result.
+
+Logic per signal:
+  1. Fetch 1-hour candles from the hour the signal was posted → now.
+  2. Phase 1  — wait until the entry price is touched in a candle.
+  3. Phase 2  — once entry is confirmed, watch for SL or TP breach.
+  4. Expiry   — if neither is hit within SIGNAL_EXPIRY_DAYS, mark "expired".
+
+UTC note:
+  All timestamps are handled in UTC throughout.
+  iso_to_ms()  → parses any ISO-8601 string and forces UTC before converting.
+  now_ms()     → datetime.now(timezone.utc) — always UTC.
+  Binance API  → accepts/returns Unix ms, which are inherently UTC.
+  No local-time conversions happen anywhere in this file.
 
 Trigger: run once a day (cron / AWS Lambda / any scheduler).
 """
@@ -12,81 +23,236 @@ import requests
 from datetime import datetime, timezone
 from supabase import create_client, Client
 
-# ── env ───────────────────────────────────────────────────────────────────────
-SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]  # bypasses RLS
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
-BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
+# ── config ────────────────────────────────────────────────────────────────────
+SUPABASE_URL         = os.environ["SUPABASE_URL"]
+SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+
+BINANCE_KLINES     = "https://api.binance.com/api/v3/klines"
+SIGNAL_EXPIRY_DAYS = 14
+HOUR_MS            = 3_600_000
+SEP                = "-" * 60
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def fetch_candles(symbol: str, start_ms: int) -> list:
+def now_ms() -> int:
+    """Current time as UTC milliseconds."""
+    return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
+def iso_to_ms(iso_str: str) -> int:
     """
-    Fetch 1-hour OHLC candles from Binance starting at signal creation time.
-    Returns up to 500 candles (~20 days). Free, no API key required.
-    Each candle: [openTime, open, high, low, close, volume, closeTime, ...]
+    ISO 8601 string → UTC milliseconds.
+    Forces UTC regardless of the offset stored in the string,
+    so 'Z', '+00:00', '+05:30' etc. all resolve correctly.
     """
-    params = {
-        "symbol": symbol,
-        "interval": "1h",
-        "startTime": start_ms,
-        "limit": 500,
-    }
-    resp = requests.get(BINANCE_KLINES, params=params, timeout=10)
+    dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00")).astimezone(timezone.utc)
+    return int(dt.timestamp() * 1000)
+
+
+def ms_to_utc(ms: int) -> str:
+    """UTC milliseconds → human-readable UTC string for logs."""
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def fetch_candles(symbol: str, signal_ms: int) -> list:
+    """
+    Fetch 1-hour OHLC candles (UTC) from Binance.
+    startTime is floored to the nearest hour so the candle that was open
+    when the signal was posted is included.
+    endTime is capped at now.
+    """
+    start = (signal_ms // HOUR_MS) * HOUR_MS
+    end   = now_ms()
+    resp  = requests.get(
+        BINANCE_KLINES,
+        params={"symbol": symbol, "interval": "1h",
+                "startTime": start, "endTime": end, "limit": 500},
+        timeout=10,
+    )
     resp.raise_for_status()
     return resp.json()
 
 
-def evaluate_signal(signal: dict, candles: list):
+def evaluate_signal(signal: dict, candles: list, signal_ms: int) -> tuple:
     """
-    Walk candles in chronological order (oldest → newest).
-    First SL or TP breach decides the result.
+    Two-phase evaluation.  Returns (result, close_price, diag).
 
-    Returns:
-        ("win",  close_price)  if TP hit first
-        ("loss", close_price)  if SL hit first
-        (None,   None)         if still open / no breach found
+    diag dict keys
+    --------------
+    entry_confirmed   bool
+    entry_candle      str | None   — UTC time of candle that confirmed entry
+    result_candle     str | None   — UTC time of candle that triggered SL/TP
+    result_candle_h   float | None
+    result_candle_l   float | None
+    candles_skipped   int          — pre-signal partial candles ignored
+    candles_checked   int          — candles evaluated in Phase 1/2
+    last_candle_time  str | None   — most recent candle time (for pending logs)
+    last_close        float | None — most recent close price
+    dist_to_sl_pct    float | None — % distance from last close to SL
+    dist_to_tp_pct    float | None — % distance from last close to TP
     """
     direction = signal["direction"]
-    sl = float(signal["stop_loss"])
-    tp = float(signal["take_profit"])
+    entry     = float(signal.get("entry_price") or signal.get("entry", 0))
+    sl        = float(signal["stop_loss"])
+    tp        = float(signal["take_profit"])
+
+    diag = {
+        "entry_confirmed":  False,
+        "entry_candle":     None,
+        "result_candle":    None,
+        "result_candle_h":  None,
+        "result_candle_l":  None,
+        "candles_skipped":  0,
+        "candles_checked":  0,
+        "last_candle_time": None,
+        "last_close":       None,
+        "dist_to_sl_pct":   None,
+        "dist_to_tp_pct":   None,
+    }
 
     for candle in candles:
-        high = float(candle[2])
-        low  = float(candle[3])
+        open_ms = int(candle[0])
+        high    = float(candle[2])
+        low     = float(candle[3])
+        close   = float(candle[4])
 
+        # Skip the partial first candle that opened before the signal was posted
+        if open_ms < signal_ms:
+            diag["candles_skipped"] += 1
+            continue
+
+        diag["candles_checked"]  += 1
+        diag["last_candle_time"]  = ms_to_utc(open_ms)
+        diag["last_close"]        = close
+
+        # Phase 1 — entry confirmation
+        if not diag["entry_confirmed"]:
+            if direction == "long"  and low  <= entry:
+                diag["entry_confirmed"] = True
+                diag["entry_candle"]    = ms_to_utc(open_ms)
+            elif direction == "short" and high >= entry:
+                diag["entry_confirmed"] = True
+                diag["entry_candle"]    = ms_to_utc(open_ms)
+
+        # Phase 2 — SL / TP (runs in same candle entry was confirmed)
+        if diag["entry_confirmed"]:
+            if direction == "long":
+                if low <= sl:
+                    diag["result_candle"]   = ms_to_utc(open_ms)
+                    diag["result_candle_h"] = high
+                    diag["result_candle_l"] = low
+                    return "loss", sl, diag
+                if high >= tp:
+                    diag["result_candle"]   = ms_to_utc(open_ms)
+                    diag["result_candle_h"] = high
+                    diag["result_candle_l"] = low
+                    return "win", tp, diag
+            else:
+                if high >= sl:
+                    diag["result_candle"]   = ms_to_utc(open_ms)
+                    diag["result_candle_h"] = high
+                    diag["result_candle_l"] = low
+                    return "loss", sl, diag
+                if low <= tp:
+                    diag["result_candle"]   = ms_to_utc(open_ms)
+                    diag["result_candle_h"] = high
+                    diag["result_candle_l"] = low
+                    return "win", tp, diag
+
+    # Compute distance from last close to SL / TP for pending diagnostics
+    if diag["last_close"]:
+        lc = diag["last_close"]
         if direction == "long":
-            if low <= sl:
-                return "loss", sl
-            if high >= tp:
-                return "win", tp
-        else:  # short
-            if high >= sl:
-                return "loss", sl
-            if low <= tp:
-                return "win", tp
+            diag["dist_to_sl_pct"] = round((sl  - lc) / lc * 100, 2)  # negative = SL below price
+            diag["dist_to_tp_pct"] = round((tp  - lc) / lc * 100, 2)  # positive = TP above price
+        else:
+            diag["dist_to_sl_pct"] = round((lc  - sl) / lc * 100, 2)  # positive = SL above price
+            diag["dist_to_tp_pct"] = round((lc  - tp) / lc * 100, 2)  # positive = TP below price
 
-    return None, None
+    age_days = (now_ms() - signal_ms) / 86_400_000
+    if age_days >= SIGNAL_EXPIRY_DAYS:
+        return "expired", None, diag
+
+    return None, None, diag
 
 
-def iso_to_ms(iso_str: str) -> int:
-    """Convert ISO 8601 timestamp string to Unix milliseconds."""
-    iso_str = iso_str.replace("Z", "+00:00")
-    dt = datetime.fromisoformat(iso_str).astimezone(timezone.utc)
-    return int(dt.timestamp() * 1000)
+def log_signal_header(signal: dict, signal_ms: int, candles: list) -> None:
+    """Print signal details and UTC timestamp info before evaluation."""
+    entry = float(signal.get("entry_price") or signal.get("entry", 0))
+    sl    = float(signal["stop_loss"])
+    tp    = float(signal["take_profit"])
+    age_h = int((now_ms() - signal_ms) / HOUR_MS)
+
+    print(SEP)
+    print(f"  {signal['pair']} | {signal['direction'].upper()} | id={signal['id']}")
+    print(f"  Posted : {ms_to_utc(signal_ms)}  ({age_h}h ago)")
+    print(f"  Entry  : {entry:>12,.4f}")
+    print(f"  SL     : {sl:>12,.4f}")
+    print(f"  TP     : {tp:>12,.4f}")
+    if candles:
+        first_t = ms_to_utc(int(candles[0][0]))
+        last_t  = ms_to_utc(int(candles[-1][0]))
+        print(f"  Candles: {len(candles)} fetched  [{first_t}  -->  {last_t}]")
+
+
+def log_result(result, close_price, diag: dict, direction: str) -> None:
+    """Print evaluation outcome with full diagnostic detail."""
+    print()
+
+    skipped = diag["candles_skipped"]
+    checked = diag["candles_checked"]
+    print(f"  Skipped {skipped} pre-signal candle(s), checked {checked} candle(s)")
+
+    # Entry status
+    if diag["entry_confirmed"]:
+        print(f"  Entry confirmed  : {diag['entry_candle']}")
+    else:
+        print(f"  Entry confirmed  : NO  — price never reached entry level")
+
+    # Result
+    if result == "win":
+        print(f"  RESULT           : WIN  (TP hit @ {close_price:,.4f})")
+        print(f"  Triggered candle : {diag['result_candle']}")
+        print(f"    Candle H={diag['result_candle_h']:,.4f}  L={diag['result_candle_l']:,.4f}")
+
+    elif result == "loss":
+        print(f"  RESULT           : LOSS  (SL hit @ {close_price:,.4f})")
+        print(f"  Triggered candle : {diag['result_candle']}")
+        print(f"    Candle H={diag['result_candle_h']:,.4f}  L={diag['result_candle_l']:,.4f}")
+
+    elif result == "expired":
+        print(f"  RESULT           : EXPIRED  (no breach in {SIGNAL_EXPIRY_DAYS} days)")
+
+    else:  # still pending
+        lc  = diag["last_close"]
+        dsl = diag["dist_to_sl_pct"]
+        dtp = diag["dist_to_tp_pct"]
+        print(f"  RESULT           : PENDING")
+        print(f"  Last candle      : {diag['last_candle_time']}")
+        if lc is not None:
+            print(f"  Last close price : {lc:,.4f}")
+        if dsl is not None and dtp is not None:
+            sl_sign = "+" if dsl > 0 else ""
+            tp_sign = "+" if dtp > 0 else ""
+            print(f"  Distance to SL   : {sl_sign}{dsl:.2f}%   (SL {'below' if direction=='long' else 'above'} current price)")
+            print(f"  Distance to TP   : {tp_sign}{dtp:.2f}%   (TP {'above' if direction=='long' else 'below'} current price)")
 
 
 # ── main handler ──────────────────────────────────────────────────────────────
 
 def handler(event=None, context=None):
-    """
-    AWS Lambda / generic cron entry point.
-    Can also be called directly: python handler.py
-    """
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-    # 1. Load all pending signals
+    print(f"\n[check_signals] Run started at {ms_to_utc(now_ms())}")
+    print(f"[check_signals] All timestamps below are UTC\n")
+
     response = (
         supabase.table("trade_signals")
         .select("*")
@@ -94,59 +260,56 @@ def handler(event=None, context=None):
         .execute()
     )
     signals = response.data
-    print(f"[check_signals] {len(signals)} pending signal(s) found\n")
+    print(f"[check_signals] {len(signals)} pending signal(s) found")
 
     stats = {"checked": len(signals), "updated": 0, "still_pending": 0, "errors": []}
 
     for signal in signals:
-        pair = signal["pair"]
+        pair      = signal["pair"]
         direction = signal["direction"]
-        sid = signal["id"]
+        sid       = signal["id"]
 
         try:
-            start_ms = iso_to_ms(signal["timestamp"])
-            candles = fetch_candles(pair, start_ms)
+            signal_ms = iso_to_ms(signal["timestamp"])
+            candles   = fetch_candles(pair, signal_ms)
 
-            result, close_price = evaluate_signal(signal, candles)
+            log_signal_header(signal, signal_ms, candles)
+
+            result, close_price, diag = evaluate_signal(signal, candles, signal_ms)
+
+            log_result(result, close_price, diag, direction)
 
             if result:
-                supabase.table("trade_signals").update(
-                    {"result": result, "close_price": close_price}
-                ).eq("id", sid).execute()
-
-                emoji = "✅" if result == "win" else "❌"
-                print(f"  {emoji}  {pair} {direction.upper():5s}  →  {result.upper()}  @ {close_price}")
+                update_payload = {"result": result}
+                if close_price is not None:
+                    update_payload["close_price"] = close_price
+                supabase.table("trade_signals").update(update_payload).eq("id", sid).execute()
+                print(f"  Supabase updated  -> result={result}")
                 stats["updated"] += 1
             else:
-                print(f"  ⏳  {pair} {direction.upper():5s}  →  still pending ({len(candles)} candles checked)")
                 stats["still_pending"] += 1
 
         except requests.HTTPError as exc:
             msg = f"{pair} ({sid}): Binance HTTP {exc.response.status_code}"
-            print(f"  ⚠️  {msg}")
+            print(f"\n  [ERR] {msg}")
             stats["errors"].append(msg)
         except Exception as exc:
             msg = f"{pair} ({sid}): {exc}"
-            print(f"  ⚠️  {msg}")
+            print(f"\n  [ERR] {msg}")
             stats["errors"].append(msg)
 
-    print(f"\n[check_signals] Done — {stats['updated']} updated, "
-          f"{stats['still_pending']} still pending, "
-          f"{len(stats['errors'])} error(s)")
+    print(f"\n{SEP}")
+    print(f"[check_signals] Done at {ms_to_utc(now_ms())}")
+    print(f"  Updated : {stats['updated']}")
+    print(f"  Pending : {stats['still_pending']}")
+    print(f"  Errors  : {len(stats['errors'])}")
+    if stats["errors"]:
+        for e in stats["errors"]:
+            print(f"    - {e}")
 
-    return {
-        "statusCode": 200,
-        "body": json.dumps(stats),
-    }
+    return {"statusCode": 200, "body": json.dumps(stats)}
 
-
-# ── local run ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()          # loads .env locally; no-op in GitHub Actions
-    except ImportError:
-        pass
     result = handler()
     print("\n" + json.dumps(json.loads(result["body"]), indent=2))
