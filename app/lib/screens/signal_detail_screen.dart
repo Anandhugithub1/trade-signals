@@ -29,7 +29,9 @@ class SignalDetailScreen extends StatelessWidget {
             Text(signal.pair,
                 style: TextStyle(
                     color: c.t1, fontWeight: FontWeight.w800, fontSize: 18)),
-            const SizedBox(width: 10),
+            const SizedBox(width: 6),
+            _Badge(label: 'PERP', color: c.accent),
+            const SizedBox(width: 6),
             _Badge(label: dirLabel, color: dirColor),
             if (!signal.isPending) ...[
               const SizedBox(width: 6),
@@ -238,6 +240,14 @@ class _PriceLevelsCard extends StatelessWidget {
             Divider(height: 1, color: c.border),
           ],
           _PriceRow(label: 'Posted', value: timeAgo(signal.timestamp), color: c.t2),
+          if (signal.hasExpiry && signal.isPending) ...[
+            Divider(height: 1, color: c.border),
+            _PriceRow(
+              label: 'Expires',
+              value: signal.expiryLabel,
+              color: signal.isExpiringSoon ? c.short : c.t2,
+            ),
+          ],
         ],
       ),
     );
@@ -276,36 +286,60 @@ class _RRCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final risk = (signal.entry - signal.stopLoss).abs();
+    final risk   = (signal.entry - signal.stopLoss).abs();
     final reward = (signal.takeProfit - signal.entry).abs();
-    final ratio = reward / risk;
+    final rr     = signal.rrRatio;
+    final rrColor = rr >= 2.0 ? c.long : rr >= 1.5 ? c.gold : c.short;
 
     return _Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Risk / Reward',
-              style: TextStyle(
-                  color: c.t1, fontSize: 15, fontWeight: FontWeight.w700)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Risk / Reward',
+                  style: TextStyle(color: c.t1, fontSize: 15, fontWeight: FontWeight.w700)),
+              // Quality badge
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: rrColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: rrColor.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(signal.rrLabel,
+                        style: TextStyle(
+                            color: rrColor, fontSize: 14, fontWeight: FontWeight.w900)),
+                    const SizedBox(width: 6),
+                    Text(signal.rrQuality,
+                        style: TextStyle(
+                            color: rrColor.withValues(alpha: 0.75),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 14),
           Row(
             children: [
-              _RRItem(label: 'Risk', value: fmtPrice(risk), color: c.short),
+              _RRItem(label: 'Risk \$', value: fmtPrice(risk), color: c.short),
               Container(
-                  width: 1,
-                  height: 36,
-                  color: c.border,
+                  width: 1, height: 36, color: c.border,
                   margin: const EdgeInsets.symmetric(horizontal: 16)),
-              _RRItem(label: 'Reward', value: fmtPrice(reward), color: c.long),
+              _RRItem(label: 'Reward \$', value: fmtPrice(reward), color: c.long),
               Container(
-                  width: 1,
-                  height: 36,
-                  color: c.border,
+                  width: 1, height: 36, color: c.border,
                   margin: const EdgeInsets.symmetric(horizontal: 16)),
               _RRItem(
-                  label: 'RR Ratio',
-                  value: '1 : ${ratio.toStringAsFixed(1)}',
-                  color: c.gold),
+                  label: 'Multiple',
+                  value: '×${rr.toStringAsFixed(2)}',
+                  color: rrColor),
             ],
           ),
         ],

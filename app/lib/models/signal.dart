@@ -7,8 +7,9 @@ class TradeSignal {
   final double takeProfit;
   final int confidence;
   final DateTime timestamp;
+  final DateTime? expiresAt;
   final SignalResult result;
-  final double? closePrice; // actual price when signal closed
+  final double? closePrice;
 
   const TradeSignal({
     required this.id,
@@ -19,13 +20,81 @@ class TradeSignal {
     required this.takeProfit,
     required this.confidence,
     required this.timestamp,
+    this.expiresAt,
     this.result = SignalResult.pending,
     this.closePrice,
   });
 
+  factory TradeSignal.fromJson(Map<String, dynamic> j) {
+    return TradeSignal(
+      id: j['id'] as String,
+      pair: j['pair'] as String,
+      direction: j['direction'] == 'long' ? SignalDirection.long : SignalDirection.short,
+      entry: (j['entry'] as num).toDouble(),
+      stopLoss: (j['stop_loss'] as num).toDouble(),
+      takeProfit: (j['take_profit'] as num).toDouble(),
+      confidence: j['confidence'] as int,
+      timestamp: DateTime.parse(j['timestamp'] as String),
+      expiresAt: j['expires_at'] != null ? DateTime.parse(j['expires_at'] as String) : null,
+      result: _resultFromString(j['result'] as String? ?? 'pending'),
+      closePrice: j['close_price'] != null ? (j['close_price'] as num).toDouble() : null,
+    );
+  }
+
+  static SignalResult _resultFromString(String r) {
+    switch (r) {
+      case 'win':     return SignalResult.win;
+      case 'loss':    return SignalResult.loss;
+      case 'expired': return SignalResult.expired;
+      default:        return SignalResult.pending;
+    }
+  }
+
   bool get isPending => result == SignalResult.pending;
   bool get isWin => result == SignalResult.win;
   bool get isLoss => result == SignalResult.loss;
+
+  // Expiry helpers
+  bool get hasExpiry => expiresAt != null;
+
+  Duration? get timeLeft {
+    if (expiresAt == null) return null;
+    return expiresAt!.difference(DateTime.now());
+  }
+
+  bool get isExpiringSoon {
+    final left = timeLeft;
+    return left != null && left.inHours <= 12 && left.isNegative == false && isPending;
+  }
+
+  /// Human-readable countdown, e.g. "Expires in 2d 4h" or "Expired"
+  String get expiryLabel {
+    if (expiresAt == null) return '';
+    final left = expiresAt!.difference(DateTime.now());
+    if (left.isNegative) return 'Expired';
+    if (left.inHours < 1) return 'Expires in <1h';
+    if (left.inHours < 24) return 'Expires in ${left.inHours}h';
+    final days = left.inDays;
+    final hours = left.inHours - days * 24;
+    return hours > 0 ? 'Expires in ${days}d ${hours}h' : 'Expires in ${days}d';
+  }
+
+  // Risk : Reward ratio — reward side of "1 : X"
+  double get rrRatio {
+    final risk = (entry - stopLoss).abs();
+    if (risk == 0) return 0;
+    return (takeProfit - entry).abs() / risk;
+  }
+
+  // Formatted label e.g. "1 : 1.5"
+  String get rrLabel => '1 : ${rrRatio.toStringAsFixed(1)}';
+
+  // Quality tier based on ratio
+  String get rrQuality {
+    if (rrRatio >= 2.0) return 'Excellent';
+    if (rrRatio >= 1.5) return 'Good';
+    return 'Fair';
+  }
 
   // Profit/loss % vs entry when closed
   double? get pnlPercent {
@@ -94,6 +163,7 @@ final List<TradeSignal> _allSignals = [
     takeProfit: 71000.00,
     confidence: 87,
     timestamp: DateTime.now().subtract(const Duration(minutes: 12)),
+    expiresAt: DateTime.now().add(const Duration(days: 6, hours: 12)),
   ),
   TradeSignal(
     id: 'a2',
@@ -104,6 +174,7 @@ final List<TradeSignal> _allSignals = [
     takeProfit: 3200.00,
     confidence: 74,
     timestamp: DateTime.now().subtract(const Duration(hours: 1)),
+    expiresAt: DateTime.now().add(const Duration(days: 3, hours: 8)),
   ),
   TradeSignal(
     id: 'a3',
@@ -114,6 +185,7 @@ final List<TradeSignal> _allSignals = [
     takeProfit: 198.00,
     confidence: 82,
     timestamp: DateTime.now().subtract(const Duration(hours: 3)),
+    expiresAt: DateTime.now().add(const Duration(days: 5)),
   ),
   TradeSignal(
     id: 'a4',
@@ -124,6 +196,7 @@ final List<TradeSignal> _allSignals = [
     takeProfit: 0.5700,
     confidence: 69,
     timestamp: DateTime.now().subtract(const Duration(hours: 6)),
+    expiresAt: DateTime.now().add(const Duration(days: 2)),
   ),
   TradeSignal(
     id: 'a5',
@@ -134,6 +207,7 @@ final List<TradeSignal> _allSignals = [
     takeProfit: 660.00,
     confidence: 78,
     timestamp: DateTime.now().subtract(const Duration(hours: 10)),
+    expiresAt: DateTime.now().add(const Duration(days: 4, hours: 6)),
   ),
 
   // --- Week 1 (WIN) ---

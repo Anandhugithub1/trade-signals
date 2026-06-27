@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/signal.dart';
+import '../services/supabase_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/signal_card.dart';
 import '../widgets/disclaimer_banner.dart';
@@ -13,10 +14,19 @@ class SignalsScreen extends StatefulWidget {
 }
 
 class _SignalsScreenState extends State<SignalsScreen> {
-  String _dirFilter = 'All';   // All | Long | Short
-  String _resFilter = 'All';   // All | Active | Won | Lost
+  String _dirFilter = 'All';
+  String _resFilter = 'All';
   String _search = '';
   final _ctrl = TextEditingController();
+  List<TradeSignal> _signals = [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
 
   @override
   void dispose() {
@@ -24,9 +34,19 @@ class _SignalsScreenState extends State<SignalsScreen> {
     super.dispose();
   }
 
+  Future<void> _load() async {
+    setState(() { _loading = true; _error = null; });
+    try {
+      final data = await SupabaseService.fetchSignals();
+      if (mounted) setState(() { _signals = data; _loading = false; });
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
   List<TradeSignal> get _filtered {
     final q = _search.toLowerCase();
-    return signalsFeed.where((s) {
+    return _signals.where((s) {
       final matchSearch = q.isEmpty || s.pair.toLowerCase().contains(q);
       final matchDir = _dirFilter == 'All' ||
           (_dirFilter == 'Long' && s.direction == SignalDirection.long) ||
@@ -42,7 +62,7 @@ class _SignalsScreenState extends State<SignalsScreen> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final stats = signalStats;
+    final stats = SignalStats.from(_signals);
 
     return Scaffold(
       backgroundColor: c.bg,
@@ -196,6 +216,23 @@ class _SignalsScreenState extends State<SignalsScreen> {
   }
 
   Widget _buildList(AppColors c) {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.wifi_off_rounded, color: c.t3, size: 40),
+            const SizedBox(height: 10),
+            Text('Failed to load signals', style: TextStyle(color: c.t2, fontSize: 15)),
+            const SizedBox(height: 10),
+            ElevatedButton(onPressed: _load, child: const Text('Retry')),
+          ],
+        ),
+      );
+    }
     if (_filtered.isEmpty) {
       return Center(
         child: Column(
@@ -203,23 +240,28 @@ class _SignalsScreenState extends State<SignalsScreen> {
           children: [
             Icon(Icons.search_off_rounded, color: c.t3, size: 40),
             const SizedBox(height: 10),
-            Text('No signals found', style: TextStyle(color: c.t2, fontSize: 15)),
-            const SizedBox(height: 4),
-            Text('Try a different filter', style: TextStyle(color: c.t3, fontSize: 12)),
+            Text(_signals.isEmpty ? 'No signals yet' : 'No signals match filters',
+                style: TextStyle(color: c.t2, fontSize: 15)),
           ],
         ),
       );
     }
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      physics: const BouncingScrollPhysics(),
-      itemCount: _filtered.length,
-      itemBuilder: (_, i) => SignalCard(
-        signal: _filtered[i],
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-              builder: (_) => SignalDetailScreen(signal: _filtered[i])),
+    return RefreshIndicator(
+      onRefresh: _load,
+      color: c.accent,
+      backgroundColor: c.card,
+      child: ListView.builder(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        physics: const AlwaysScrollableScrollPhysics(
+            parent: BouncingScrollPhysics()),
+        itemCount: _filtered.length,
+        itemBuilder: (_, i) => SignalCard(
+          signal: _filtered[i],
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => SignalDetailScreen(signal: _filtered[i])),
+          ),
         ),
       ),
     );

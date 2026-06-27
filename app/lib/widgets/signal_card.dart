@@ -90,7 +90,9 @@ class _CompactBody extends StatelessWidget {
                 children: [
                   Text(signal.pair,
                       style: TextStyle(color: c.t1, fontSize: 14, fontWeight: FontWeight.w700)),
-                  const SizedBox(width: 7),
+                  const SizedBox(width: 5),
+                  _PerpChip(),
+                  const SizedBox(width: 5),
                   _DirectionBadge(signal: signal, color: dirColor),
                 ],
               ),
@@ -130,8 +132,14 @@ class _FullBody extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(signal.pair,
-                        style: TextStyle(color: c.t1, fontSize: 15, fontWeight: FontWeight.w700)),
+                    Row(
+                      children: [
+                        Text(signal.pair,
+                            style: TextStyle(color: c.t1, fontSize: 15, fontWeight: FontWeight.w700)),
+                        const SizedBox(width: 5),
+                        _PerpChip(),
+                      ],
+                    ),
                     const SizedBox(height: 1),
                     Text(timeAgo(signal.timestamp),
                         style: TextStyle(color: c.t3, fontSize: 11)),
@@ -156,8 +164,14 @@ class _FullBody extends StatelessWidget {
             _PriceTile(label: 'STOP', value: fmtPrice(signal.stopLoss), valueColor: c.short),
             const SizedBox(width: 8),
             _PriceTile(label: 'TARGET', value: fmtPrice(signal.takeProfit), valueColor: c.long),
+            const SizedBox(width: 8),
+            _RRTile(signal: signal),
           ],
         ),
+        if (signal.isPending && signal.hasExpiry) ...[
+          const SizedBox(height: 8),
+          _ExpiryRow(signal: signal),
+        ],
         if (!signal.isPending) ...[
           const SizedBox(height: 8),
           _PnlRow(signal: signal),
@@ -217,6 +231,30 @@ class _ResultBadge extends StatelessWidget {
           Text(label,
               style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
         ],
+      ),
+    );
+  }
+}
+
+class _PerpChip extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(
+        color: c.accentBg,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: c.accent.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        'PERP',
+        style: TextStyle(
+          color: c.accent,
+          fontSize: 8,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.8,
+        ),
       ),
     );
   }
@@ -321,6 +359,63 @@ class _PriceTile extends StatelessWidget {
             const SizedBox(height: 3),
             Text(value,
                 style: TextStyle(color: valueColor, fontSize: 12, fontWeight: FontWeight.w700)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ExpiryRow extends StatelessWidget {
+  final TradeSignal signal;
+  const _ExpiryRow({required this.signal});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final color = signal.isExpiringSoon ? c.short : c.t3;
+    final icon = signal.isExpiringSoon
+        ? Icons.timer_outlined
+        : Icons.schedule_rounded;
+    return Row(
+      children: [
+        Icon(icon, color: color, size: 12),
+        const SizedBox(width: 4),
+        Text(
+          signal.expiryLabel,
+          style: TextStyle(color: color, fontSize: 11),
+        ),
+      ],
+    );
+  }
+}
+
+class _RRTile extends StatelessWidget {
+  final TradeSignal signal;
+  const _RRTile({required this.signal});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final rr = signal.rrRatio;
+    final color = rr >= 2.0 ? c.long : rr >= 1.5 ? c.gold : c.t2;
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withValues(alpha: 0.25)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('RR',
+                style: TextStyle(
+                    color: c.t3, fontSize: 9, letterSpacing: 0.4, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 3),
+            Text(signal.rrLabel,
+                style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w800)),
           ],
         ),
       ),

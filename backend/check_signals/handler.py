@@ -20,7 +20,7 @@ Trigger: run once a day (cron / AWS Lambda / any scheduler).
 import json
 import os
 import requests
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from supabase import create_client, Client
 
 try:
@@ -33,7 +33,7 @@ except ImportError:
 SUPABASE_URL         = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
-BINANCE_KLINES     = "https://api.binance.com/api/v3/klines"
+BINANCE_KLINES     = "https://fapi.binance.com/fapi/v1/klines"  # USDT-M Futures perpetual
 SIGNAL_EXPIRY_DAYS = 14
 HOUR_MS            = 3_600_000
 SEP                = "-" * 60
@@ -176,9 +176,17 @@ def evaluate_signal(signal: dict, candles: list, signal_ms: int) -> tuple:
             diag["dist_to_sl_pct"] = round((lc  - sl) / lc * 100, 2)  # positive = SL above price
             diag["dist_to_tp_pct"] = round((lc  - tp) / lc * 100, 2)  # positive = TP below price
 
-    age_days = (now_ms() - signal_ms) / 86_400_000
-    if age_days >= SIGNAL_EXPIRY_DAYS:
-        return "expired", None, diag
+    # ── Expiry check ──────────────────────────────────────────────────────────
+    # Prefer the signal's own expires_at (set at creation time, 2–7 days).
+    # Fall back to the flat SIGNAL_EXPIRY_DAYS for older signals without it.
+    expires_at_str = signal.get("expires_at")
+    if expires_at_str:
+        if now_ms() >= iso_to_ms(expires_at_str):
+            return "expired", None, diag
+    else:
+        age_days = (now_ms() - signal_ms) / 86_400_000
+        if age_days >= SIGNAL_EXPIRY_DAYS:
+            return "expired", None, diag
 
     return None, None, diag
 
@@ -190,12 +198,21 @@ def log_signal_header(signal: dict, signal_ms: int, candles: list) -> None:
     tp    = float(signal["take_profit"])
     age_h = int((now_ms() - signal_ms) / HOUR_MS)
 
+    expires_at_str = signal.get("expires_at", "")
+    if expires_at_str:
+        expires_ms  = iso_to_ms(expires_at_str)
+        hours_left  = (expires_ms - now_ms()) / HOUR_MS
+        expiry_line = f"{expires_at_str[:10]}  ({'+' if hours_left >= 0 else ''}{hours_left:.1f}h {'left' if hours_left >= 0 else 'OVERDUE'})"
+    else:
+        expiry_line = "not set (legacy signal)"
+
     print(SEP)
     print(f"  {signal['pair']} | {signal['direction'].upper()} | id={signal['id']}")
-    print(f"  Posted : {ms_to_utc(signal_ms)}  ({age_h}h ago)")
-    print(f"  Entry  : {entry:>12,.4f}")
-    print(f"  SL     : {sl:>12,.4f}")
-    print(f"  TP     : {tp:>12,.4f}")
+    print(f"  Posted   : {ms_to_utc(signal_ms)}  ({age_h}h ago)")
+    print(f"  Expires  : {expiry_line}")
+    print(f"  Entry    : {entry:>12,.4f}")
+    print(f"  SL       : {sl:>12,.4f}")
+    print(f"  TP       : {tp:>12,.4f}")
     if candles:
         first_t = ms_to_utc(int(candles[0][0]))
         last_t  = ms_to_utc(int(candles[-1][0]))
@@ -298,11 +315,31 @@ def handler(event=None, context=None):
             print(f"\n  [ERR] {msg}")
             stats["errors"].append(msg)
 
+    # ── 3-month TTL cleanup ───────────────────────────────────────────────────
+    # Delete any signals (any result) whose timestamp is older than 90 days.
+    # This mirrors what pg_cron does inside Supabase — keeping both means the
+    # data is cleaned whether this script runs or not.
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
+        deleted = (
+            supabase.table("trade_signals")
+            .delete()
+            .lt("timestamp", cutoff)
+            .execute()
+        )
+        n_deleted = len(deleted.data) if deleted.data else 0
+        print(f"\n  [TTL]  Deleted {n_deleted} signal(s) older than 90 days  (cutoff: {cutoff[:10]})")
+        stats["deleted_old"] = n_deleted
+    except Exception as exc:
+        print(f"\n  [TTL ERR]  Cleanup failed: {exc}")
+        stats["deleted_old"] = 0
+
     print(f"\n{SEP}")
     print(f"[check_signals] Done at {ms_to_utc(now_ms())}")
-    print(f"  Updated : {stats['updated']}")
-    print(f"  Pending : {stats['still_pending']}")
-    print(f"  Errors  : {len(stats['errors'])}")
+    print(f"  Updated      : {stats['updated']}")
+    print(f"  Pending      : {stats['still_pending']}")
+    print(f"  Deleted >90d : {stats.get('deleted_old', 0)}")
+    print(f"  Errors       : {len(stats['errors'])}")
     if stats["errors"]:
         for e in stats["errors"]:
             print(f"    - {e}")

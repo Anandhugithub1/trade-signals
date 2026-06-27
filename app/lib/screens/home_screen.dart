@@ -1,45 +1,155 @@
 import 'package:flutter/material.dart';
 import '../models/signal.dart';
+import '../models/market_sentiment.dart';
+import '../services/supabase_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/signal_card.dart';
 import '../widgets/disclaimer_banner.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  late Future<({List<TradeSignal> signals, MarketSentiment? sentiment})> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = SupabaseService.fetchAll();
+  }
+
+  void _refresh() => setState(() => _future = SupabaseService.fetchAll());
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final stats = signalStats;
-    final feed = signalsFeed;
-
     return Scaffold(
       backgroundColor: c.bg,
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          physics: const BouncingScrollPhysics(),
+        child: FutureBuilder(
+          future: _future,
+          builder: (context, snap) {
+            if (snap.connectionState == ConnectionState.waiting) {
+              return const _LoadingBody();
+            }
+            if (snap.hasError) {
+              return _ErrorBody(
+                message: snap.error.toString(),
+                onRetry: _refresh,
+              );
+            }
+            final data = snap.data!;
+            final signals = data.signals;
+            final sentiment = data.sentiment ?? MarketSentiment.placeholder;
+            final stats = SignalStats.from(signals);
+            final active = signals.where((s) => s.isPending).toList();
+            final feed = signals;
+
+            return RefreshIndicator(
+              onRefresh: () async => _refresh(),
+              color: c.accent,
+              backgroundColor: c.card,
+              child: ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                physics: const AlwaysScrollableScrollPhysics(
+                    parent: BouncingScrollPhysics()),
+                children: [
+                  const SizedBox(height: 22),
+                  _Header(),
+                  const SizedBox(height: 14),
+                  const DisclaimerBanner(),
+                  const SizedBox(height: 14),
+                  _HeroPerformanceCard(stats: stats),
+                  const SizedBox(height: 14),
+                  _SentimentCard(sentiment: sentiment),
+                  const SizedBox(height: 16),
+                  if (feed.isNotEmpty) _FeaturedCard(signal: feed.first),
+                  const SizedBox(height: 24),
+                  _SectionHeader(
+                    title: 'Recent Signals',
+                    tag: '${active.length} active',
+                  ),
+                  const SizedBox(height: 10),
+                  ...feed.take(4).map((s) => SignalCard(signal: s, compact: true)),
+                  const SizedBox(height: 12),
+                  _ViewAllBtn(),
+                  const SizedBox(height: 28),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _LoadingBody extends StatelessWidget {
+  const _LoadingBody();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      children: [
+        const SizedBox(height: 22),
+        _Header(),
+        const SizedBox(height: 24),
+        ...[140.0, 120.0, 200.0, 80.0, 80.0, 80.0].map((h) => Padding(
+              padding: const EdgeInsets.only(bottom: 14),
+              child: Container(
+                height: h,
+                decoration: BoxDecoration(
+                  color: c.card,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+            )),
+      ],
+    );
+  }
+}
+
+class _ErrorBody extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+
+  const _ErrorBody({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const SizedBox(height: 22),
-            _Header(),
-            const SizedBox(height: 14),
-            const DisclaimerBanner(),
-            const SizedBox(height: 14),
-            _HeroPerformanceCard(stats: stats),
-            const SizedBox(height: 14),
-            _SentimentCard(),
+            Icon(Icons.wifi_off_rounded, color: c.t3, size: 48),
             const SizedBox(height: 16),
-            if (feed.isNotEmpty) _FeaturedCard(signal: feed.first),
+            Text('Could not load data',
+                style: TextStyle(color: c.t1, fontSize: 17, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            Text(message,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: c.t2, fontSize: 13)),
             const SizedBox(height: 24),
-            _SectionHeader(
-              title: 'Recent Signals',
-              tag: '${activeSignals.length} active',
+            ElevatedButton.icon(
+              onPressed: onRetry,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: c.accent,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Retry'),
             ),
-            const SizedBox(height: 10),
-            ...feed.take(4).map((s) => SignalCard(signal: s, compact: true)),
-            const SizedBox(height: 12),
-            _ViewAllBtn(),
-            const SizedBox(height: 28),
           ],
         ),
       ),
@@ -103,11 +213,29 @@ class _Header extends StatelessWidget {
                     ),
                   ),
                 ),
+                const SizedBox(width: 5),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: c.accentBg,
+                    borderRadius: BorderRadius.circular(5),
+                    border: Border.all(color: c.accent.withValues(alpha: 0.4)),
+                  ),
+                  child: Text(
+                    'FUTURES',
+                    style: TextStyle(
+                      color: c.accent,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1.0,
+                    ),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 4),
             Text(
-              '$greeting, Alex',
+              '$greeting, Alex · Perpetual Signals',
               style: TextStyle(color: c.t2, fontSize: 13, fontWeight: FontWeight.w500),
             ),
           ],
@@ -347,9 +475,20 @@ class _HeroStatDivider extends StatelessWidget {
 }
 
 class _SentimentCard extends StatelessWidget {
+  final MarketSentiment sentiment;
+
+  const _SentimentCard({required this.sentiment});
+
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    final isPlaceholder = sentiment.id == 'placeholder';
+    final dominantColor = sentiment.dominant == 'bullish'
+        ? c.long
+        : sentiment.dominant == 'bearish'
+            ? c.short
+            : c.gold;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -373,21 +512,35 @@ class _SentimentCard extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(color: c.long, shape: BoxShape.circle),
+              Row(
+                children: [
+                  if (!isPlaceholder && sentiment.fearGreedValue != null) ...[
+                    Text(
+                      'F&G ${sentiment.fearGreedValue}',
+                      style: TextStyle(color: c.t2, fontSize: 11),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(color: dominantColor, shape: BoxShape.circle),
+                  ),
+                ],
               ),
             ],
           ),
           const SizedBox(height: 14),
           Row(
             children: [
-              _SentPill(label: 'Bullish', pct: 62, color: c.long, active: true),
+              _SentPill(label: 'Bullish', pct: sentiment.bullishPct, color: c.long,
+                  active: sentiment.dominant == 'bullish'),
               const SizedBox(width: 8),
-              _SentPill(label: 'Neutral', pct: 21, color: c.gold, active: false),
+              _SentPill(label: 'Neutral', pct: sentiment.neutralPct, color: c.gold,
+                  active: sentiment.dominant == 'neutral'),
               const SizedBox(width: 8),
-              _SentPill(label: 'Bearish', pct: 17, color: c.short, active: false),
+              _SentPill(label: 'Bearish', pct: sentiment.bearishPct, color: c.short,
+                  active: sentiment.dominant == 'bearish'),
             ],
           ),
           const SizedBox(height: 14),
@@ -395,15 +548,20 @@ class _SentimentCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(4),
             child: Row(
               children: [
-                Flexible(flex: 62, child: Container(height: 6, color: c.long)),
-                Flexible(flex: 21, child: Container(height: 6, color: c.gold)),
-                Flexible(flex: 17, child: Container(height: 6, color: c.short)),
+                Flexible(flex: sentiment.bullishPct.clamp(1, 100),
+                    child: Container(height: 6, color: c.long)),
+                Flexible(flex: sentiment.neutralPct.clamp(1, 100),
+                    child: Container(height: 6, color: c.gold)),
+                Flexible(flex: sentiment.bearishPct.clamp(1, 100),
+                    child: Container(height: 6, color: c.short)),
               ],
             ),
           ),
           const SizedBox(height: 10),
           Text(
-            '14 active longs  ·  6 shorts',
+            isPlaceholder
+                ? 'Run generate_signals to update sentiment'
+                : '${sentiment.activeLongs} active longs  ·  ${sentiment.activeShorts} shorts',
             style: TextStyle(color: c.t2, fontSize: 12),
           ),
         ],

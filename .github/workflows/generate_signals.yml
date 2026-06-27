@@ -1,0 +1,33 @@
+name: Generate Signals
+
+on:
+  schedule:
+    - cron: '0 8 * * *'    # 8:00 AM UTC — Asian session open
+    - cron: '0 20 * * *'   # 8:00 PM UTC — US session open
+  workflow_dispatch:         # manual trigger from GitHub Actions tab
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/generate_signals/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/generate_signals/requirements.txt
+
+      - name: Run generate_signals
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CRYPTOPANIC_API_KEY: ${{ secrets.CRYPTOPANIC_API_KEY }}
+        run: python backend/generate_signals/handler.py
