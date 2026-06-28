@@ -3,6 +3,7 @@ import '../models/signal.dart';
 import '../services/supabase_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/signal_card.dart';
+import '../widgets/error_view.dart';
 import '../widgets/disclaimer_banner.dart';
 import 'signal_detail_screen.dart';
 
@@ -220,30 +221,15 @@ class _SignalsScreenState extends State<SignalsScreen> {
       return const Center(child: CircularProgressIndicator());
     }
     if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.wifi_off_rounded, color: c.t3, size: 40),
-            const SizedBox(height: 10),
-            Text('Failed to load signals', style: TextStyle(color: c.t2, fontSize: 15)),
-            const SizedBox(height: 10),
-            ElevatedButton(onPressed: _load, child: const Text('Retry')),
-          ],
-        ),
-      );
+      return ErrorView(error: _error!, onRetry: _load);
     }
     if (_filtered.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.search_off_rounded, color: c.t3, size: 40),
-            const SizedBox(height: 10),
-            Text(_signals.isEmpty ? 'No signals yet' : 'No signals match filters',
-                style: TextStyle(color: c.t2, fontSize: 15)),
-          ],
-        ),
+      return EmptyView(
+        icon: _signals.isEmpty ? Icons.bolt_outlined : Icons.search_off_rounded,
+        title: _signals.isEmpty ? 'No signals yet' : 'No matches',
+        subtitle: _signals.isEmpty
+            ? 'Signals will appear here once the generator runs.'
+            : 'Try adjusting your search or filters.',
       );
     }
     return RefreshIndicator(

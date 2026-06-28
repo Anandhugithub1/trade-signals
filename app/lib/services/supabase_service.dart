@@ -1,38 +1,74 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/signal.dart';
 import '../models/market_sentiment.dart';
+import '../utils/app_error.dart';
 
 class SupabaseService {
   static SupabaseClient get _db => Supabase.instance.client;
 
-  /// Signals from the last 90 days, newest first.
-  static Future<List<TradeSignal>> fetchSignals() async {
-    final cutoff = DateTime.now()
-        .subtract(const Duration(days: 90))
-        .toIso8601String();
-    final data = await _db
-        .from('trade_signals')
-        .select()
-        .gte('timestamp', cutoff)
-        .order('timestamp', ascending: false);
-    return data
-        .map<TradeSignal>((e) => TradeSignal.fromJson(e))
-        .toList();
+  /// Wraps any Supabase / network call and maps exceptions to typed [AppError]s.
+  static Future<T> _guard<T>(Future<T> Function() fn) async {
+    try {
+      return await fn().timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw NetworkError(),
+      );
+    } on NetworkError {
+      rethrow;
+    } on AuthError {
+      rethrow;
+    } on AppError {
+      rethrow;
+    } on AuthException {
+      throw const AuthError();
+    } on PostgrestException catch (e) {
+      // Map common Supabase PG error codes to friendly messages
+      final msg = switch (e.code) {
+        '42P01' => 'Table not found — run the Supabase setup SQL.',
+        '23505' => 'Duplicate entry — this record already exists.',
+        '42501' => 'Permission denied — check Row Level Security policies.',
+        _       => e.message,
+      };
+      throw ServerError(msg, code: e.code);
+    } catch (e) {
+      final s = e.toString().toLowerCase();
+      if (s.contains('socket') || s.contains('network') ||
+          s.contains('host lookup') || s.contains('connection refused') ||
+          s.contains('timeout') || s.contains('no address associated')) {
+        throw const NetworkError();
+      }
+      throw AppError(e.toString());
+    }
   }
+
+  /// Signals from the last 90 days, newest first.
+  static Future<List<TradeSignal>> fetchSignals() => _guard(() async {
+        final cutoff = DateTime.now()
+            .subtract(const Duration(days: 90))
+            .toIso8601String();
+        final data = await _db
+            .from('trade_signals')
+            .select()
+            .gte('timestamp', cutoff)
+            .order('timestamp', ascending: false);
+        return data
+            .map<TradeSignal>((e) => TradeSignal.fromJson(e))
+            .toList();
+      });
 
   /// Most recent market sentiment row.
-  static Future<MarketSentiment?> fetchLatestSentiment() async {
-    final data = await _db
-        .from('market_sentiment')
-        .select()
-        .order('date', ascending: false)
-        .limit(1)
-        .maybeSingle();
-    if (data == null) return null;
-    return MarketSentiment.fromJson(data);
-  }
+  static Future<MarketSentiment?> fetchLatestSentiment() => _guard(() async {
+        final data = await _db
+            .from('market_sentiment')
+            .select()
+            .order('date', ascending: false)
+            .limit(1)
+            .maybeSingle();
+        if (data == null) return null;
+        return MarketSentiment.fromJson(data);
+      });
 
-  /// Both in parallel.
+  /// Both in parallel — throws the first error if either fails.
   static Future<({List<TradeSignal> signals, MarketSentiment? sentiment})>
       fetchAll() async {
     final (sigs, sent) = await (fetchSignals(), fetchLatestSentiment()).wait;

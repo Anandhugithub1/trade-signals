@@ -4,7 +4,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'config/supabase_config.dart';
 import 'theme/app_theme.dart';
 import 'theme/app_colors.dart';
-import 'screens/splash_screen.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/auth/register_screen.dart';
 import 'screens/disclaimer_screen.dart';
@@ -38,14 +37,15 @@ class TradePilotApp extends StatelessWidget {
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,
       themeMode: ThemeMode.system,
-      initialRoute: '/',
+      // MVP: no login required — go straight to app
+      initialRoute: '/main',
       routes: {
-        '/': (_) => const SplashScreen(),
+        '/main': (_) => const MainShell(),
         '/disclaimer': (_) => const DisclaimerScreen(isOnboarding: true),
         '/disclaimer/info': (_) => const DisclaimerScreen(isOnboarding: false),
+        // Auth routes kept for future use
         '/login': (_) => const LoginScreen(),
         '/register': (_) => const RegisterScreen(),
-        '/main': (_) => const MainShell(),
       },
     );
   }

@@ -5,6 +5,7 @@ import '../services/supabase_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/signal_card.dart';
 import '../widgets/disclaimer_banner.dart';
+import '../widgets/error_view.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -37,10 +38,7 @@ class _HomeScreenState extends State<HomeScreen> {
               return const _LoadingBody();
             }
             if (snap.hasError) {
-              return _ErrorBody(
-                message: snap.error.toString(),
-                onRetry: _refresh,
-              );
+              return ErrorView(error: snap.error!, onRetry: _refresh);
             }
             final data = snap.data!;
             final signals = data.signals;
@@ -115,47 +113,6 @@ class _LoadingBody extends StatelessWidget {
   }
 }
 
-class _ErrorBody extends StatelessWidget {
-  final String message;
-  final VoidCallback onRetry;
-
-  const _ErrorBody({required this.message, required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.wifi_off_rounded, color: c.t3, size: 48),
-            const SizedBox(height: 16),
-            Text('Could not load data',
-                style: TextStyle(color: c.t1, fontSize: 17, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 6),
-            Text(message,
-                textAlign: TextAlign.center,
-                style: TextStyle(color: c.t2, fontSize: 13)),
-            const SizedBox(height: 24),
-            ElevatedButton.icon(
-              onPressed: onRetry,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: c.accent,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Retry'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 class _Header extends StatelessWidget {
   @override
@@ -199,14 +156,14 @@ class _Header extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                   decoration: BoxDecoration(
-                    color: c.goldBg,
+                    color: c.longBg,
                     borderRadius: BorderRadius.circular(5),
-                    border: Border.all(color: c.gold.withValues(alpha: 0.45)),
+                    border: Border.all(color: c.long.withValues(alpha: 0.4)),
                   ),
                   child: Text(
-                    'PRO',
+                    'FREE',
                     style: TextStyle(
-                      color: c.gold,
+                      color: c.long,
                       fontSize: 9,
                       fontWeight: FontWeight.w800,
                       letterSpacing: 1.2,
@@ -235,39 +192,20 @@ class _Header extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              '$greeting, Alex · Perpetual Signals',
+              '$greeting · Perpetual Futures Signals',
               style: TextStyle(color: c.t2, fontSize: 13, fontWeight: FontWeight.w500),
             ),
           ],
         ),
         Container(
-          width: 42,
-          height: 42,
+          width: 40,
+          height: 40,
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [c.accent, c.accent.withValues(alpha: 0.7)],
-            ),
+            color: c.accentBg,
             shape: BoxShape.circle,
-            boxShadow: [
-              BoxShadow(
-                color: c.accent.withValues(alpha: 0.3),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
-              ),
-            ],
+            border: Border.all(color: c.accent.withValues(alpha: 0.3)),
           ),
-          child: const Center(
-            child: Text(
-              'A',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w800,
-                fontSize: 17,
-              ),
-            ),
-          ),
+          child: Icon(Icons.notifications_none_rounded, color: c.accent, size: 20),
         ),
       ],
     );

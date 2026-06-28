@@ -19,6 +19,7 @@ Trigger: run once a day (cron / AWS Lambda / any scheduler).
 
 import json
 import os
+import time
 import requests
 from datetime import datetime, timezone, timedelta
 from supabase import create_client, Client
@@ -37,6 +38,28 @@ BINANCE_FUTURES    = "https://fapi.binance.com/fapi/v1/klines"   # USDT-M Future
 BYBIT_KLINES       = "https://api.bybit.com/v5/market/kline"     # Bybit perpetual (blocked on Azure)
 OKX_KLINES         = "https://www.okx.com/api/v5/market/candles" # OKX — US-accessible, no geo-block
 _HEADERS           = {"User-Agent": "TradePilot/1.0 signal-bot"}
+
+
+def _retry(fn, retries: int = 3, backoff: float = 1.5, label: str = ""):
+    """Retry on transient network / 5xx errors with exponential backoff."""
+    last_exc: Exception = RuntimeError("no attempts made")
+    for attempt in range(retries):
+        try:
+            return fn()
+        except requests.HTTPError as exc:
+            if exc.response is not None and exc.response.status_code < 500:
+                raise   # 4xx — geo-block / bad request, won't fix on retry
+            last_exc = exc
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            last_exc = exc
+        except Exception:
+            raise
+
+        wait = backoff * (2 ** attempt)
+        lbl  = f" [{label}]" if label else ""
+        print(f"  [RETRY]{lbl} attempt {attempt + 1}/{retries} failed — retrying in {wait:.1f}s")
+        time.sleep(wait)
+    raise last_exc
 SIGNAL_EXPIRY_DAYS = 14
 HOUR_MS            = 3_600_000
 SEP                = "-" * 60
@@ -333,7 +356,7 @@ def handler(event=None, context=None):
 
         try:
             signal_ms = iso_to_ms(signal["timestamp"])
-            candles   = fetch_candles(pair, signal_ms)
+            candles   = _retry(lambda: fetch_candles(pair, signal_ms), label=pair)
 
             log_signal_header(signal, signal_ms, candles)
 
@@ -345,18 +368,27 @@ def handler(event=None, context=None):
                 update_payload = {"result": result}
                 if close_price is not None:
                     update_payload["close_price"] = close_price
-                supabase.table("trade_signals").update(update_payload).eq("id", sid).execute()
+                _retry(
+                    lambda: supabase.table("trade_signals")
+                        .update(update_payload).eq("id", sid).execute(),
+                    label=f"DB update {pair}",
+                )
                 print(f"  Supabase updated  -> result={result}")
                 stats["updated"] += 1
             else:
                 stats["still_pending"] += 1
 
         except requests.HTTPError as exc:
-            msg = f"{pair} ({sid}): API HTTP {exc.response.status_code} (all providers failed)"
+            code = exc.response.status_code if exc.response is not None else "?"
+            msg  = f"{pair} ({sid}): all candle providers returned HTTP {code}"
+            print(f"\n  [ERR] {msg}")
+            stats["errors"].append(msg)
+        except TimeoutError as exc:
+            msg = f"{pair} ({sid}): request timed out — {exc}"
             print(f"\n  [ERR] {msg}")
             stats["errors"].append(msg)
         except Exception as exc:
-            msg = f"{pair} ({sid}): {exc}"
+            msg = f"{pair} ({sid}): {type(exc).__name__}: {exc}"
             print(f"\n  [ERR] {msg}")
             stats["errors"].append(msg)
 

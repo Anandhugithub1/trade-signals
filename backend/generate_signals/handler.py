@@ -45,6 +45,7 @@ Trigger: 3× per day via GitHub Actions cron.
 
 import json
 import os
+import time
 import uuid
 import requests
 import feedparser
@@ -98,6 +99,33 @@ _MACRO_BEAR = {
 }
 
 _HEADERS = {"User-Agent": "TradePilot/1.0 signal-bot"}
+
+
+def _retry(fn, retries: int = 3, backoff: float = 1.5, label: str = ""):
+    """
+    Call fn() up to `retries` times with exponential backoff.
+    Only retries on transient errors (network / 5xx).  Raises on final failure.
+    """
+    last_exc: Exception = RuntimeError("no attempts made")
+    for attempt in range(retries):
+        try:
+            return fn()
+        except requests.HTTPError as exc:
+            # Don't retry on 4xx (geo-block, bad request) — they won't fix themselves
+            if exc.response is not None and exc.response.status_code < 500:
+                raise
+            last_exc = exc
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            last_exc = exc
+        except Exception as exc:
+            raise   # unknown error — don't retry
+
+        wait = backoff * (2 ** attempt)
+        lbl  = f" [{label}]" if label else ""
+        print(f"  [RETRY]{lbl} attempt {attempt + 1}/{retries} failed — retrying in {wait:.1f}s")
+        time.sleep(wait)
+
+    raise last_exc
 
 # Top 10 by market cap (Binance perpetual pairs)
 TOP_PAIRS = [

@@ -1,32 +1,66 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/signal.dart';
+import '../services/supabase_service.dart';
 import '../theme/app_colors.dart';
 
-class ProfileScreen extends StatelessWidget {
+// Derives a display name from an email address.
+// "next.anandhu@gmail.com" → "Next"
+String _firstName(String email) {
+  final local = email.split('@').first;
+  final part  = local.split(RegExp(r'[._+\-]')).firstWhere((p) => p.isNotEmpty, orElse: () => 'trader');
+  return part[0].toUpperCase() + part.substring(1).toLowerCase();
+}
+
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
   @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  late Future<List<TradeSignal>> _signalsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _signalsFuture = SupabaseService.fetchSignals();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final c = context.colors;
+    final c    = context.colors;
+    final user = Supabase.instance.client.auth.currentUser;
+    final email   = user?.email ?? '';
+    final initial = email.isNotEmpty ? email[0].toUpperCase() : 'T';
+
     return Scaffold(
       backgroundColor: c.bg,
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.symmetric(horizontal: 20),
-          physics: const BouncingScrollPhysics(),
-          children: const [
-            SizedBox(height: 20),
-            _TopBar(),
-            SizedBox(height: 28),
-            _Avatar(),
-            SizedBox(height: 24),
-            _SubscriptionCard(),
-            SizedBox(height: 16),
-            _StatsCard(),
-            SizedBox(height: 16),
-            _MenuCard(),
-            SizedBox(height: 28),
-          ],
+        child: FutureBuilder<List<TradeSignal>>(
+          future: _signalsFuture,
+          builder: (context, snap) {
+            final signals = snap.data ?? [];
+            final stats   = SignalStats.from(signals);
+            return ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              physics: const BouncingScrollPhysics(),
+              children: [
+                const SizedBox(height: 20),
+                _TopBar(),
+                const SizedBox(height: 28),
+                _AvatarSection(initial: initial, email: email),
+                const SizedBox(height: 20),
+                _FreePlanCard(),
+                const SizedBox(height: 16),
+                _StatsCard(stats: stats, loading: snap.connectionState == ConnectionState.waiting),
+                const SizedBox(height: 16),
+                const _MenuCard(),
+                const SizedBox(height: 28),
+              ],
+            );
+          },
         ),
       ),
     );
@@ -34,8 +68,6 @@ class ProfileScreen extends StatelessWidget {
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar();
-
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -44,53 +76,68 @@ class _TopBar extends StatelessWidget {
       children: [
         Text('Profile',
             style: TextStyle(
-                color: c.t1,
-                fontSize: 26,
-                fontWeight: FontWeight.w800,
-                letterSpacing: -0.5)),
+                color: c.t1, fontSize: 26, fontWeight: FontWeight.w800, letterSpacing: -0.5)),
         Icon(Icons.settings_outlined, color: c.t2, size: 22),
       ],
     );
   }
 }
 
-class _Avatar extends StatelessWidget {
-  const _Avatar();
+class _AvatarSection extends StatelessWidget {
+  final String initial;
+  final String email;
+  const _AvatarSection({required this.initial, required this.email});
 
   @override
   Widget build(BuildContext context) {
-    final c = context.colors;
+    final c    = context.colors;
+    final name = email.isNotEmpty ? _firstName(email) : 'Trader';
     return Column(
       children: [
         Container(
-          width: 72,
-          height: 72,
+          width: 76,
+          height: 76,
           decoration: BoxDecoration(
             color: c.accentBg,
             shape: BoxShape.circle,
-            border: Border.all(color: c.accent.withValues(alpha: 0.4), width: 2),
+            border: Border.all(color: c.accent.withValues(alpha: 0.45), width: 2.5),
           ),
           child: Center(
-            child: Text('A',
-                style: TextStyle(
-                    color: c.accent, fontSize: 28, fontWeight: FontWeight.w800)),
+            child: Text(initial,
+                style: TextStyle(color: c.accent, fontSize: 30, fontWeight: FontWeight.w800)),
           ),
         ),
         const SizedBox(height: 12),
-        Text('Alex Johnson',
-            style: TextStyle(
-                color: c.t1, fontSize: 20, fontWeight: FontWeight.w700)),
+        Text(name,
+            style: TextStyle(color: c.t1, fontSize: 20, fontWeight: FontWeight.w700)),
         const SizedBox(height: 3),
-        Text('alex.johnson@email.com',
+        Text(email.isNotEmpty ? email : 'Not signed in',
             style: TextStyle(color: c.t2, fontSize: 13)),
+        const SizedBox(height: 8),
+        // FREE badge
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: c.accentBg,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: c.accent.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.check_circle_outline_rounded, color: c.accent, size: 13),
+              const SizedBox(width: 5),
+              Text('Free Access · MVP',
+                  style: TextStyle(color: c.accent, fontSize: 11, fontWeight: FontWeight.w700)),
+            ],
+          ),
+        ),
       ],
     );
   }
 }
 
-class _SubscriptionCard extends StatelessWidget {
-  const _SubscriptionCard();
-
+class _FreePlanCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
@@ -99,7 +146,7 @@ class _SubscriptionCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: c.card,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: c.gold.withValues(alpha: 0.35)),
+        border: Border.all(color: c.accent.withValues(alpha: 0.25)),
       ),
       child: Row(
         children: [
@@ -107,11 +154,11 @@ class _SubscriptionCard extends StatelessWidget {
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: c.goldBg,
+              color: c.accentBg,
               borderRadius: BorderRadius.circular(11),
-              border: Border.all(color: c.gold.withValues(alpha: 0.3)),
+              border: Border.all(color: c.accent.withValues(alpha: 0.25)),
             ),
-            child: Icon(Icons.workspace_premium_rounded, color: c.gold, size: 22),
+            child: Icon(Icons.rocket_launch_rounded, color: c.accent, size: 20),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -120,63 +167,46 @@ class _SubscriptionCard extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Text('Pro Plan',
+                    Text('Free Plan',
                         style: TextStyle(
-                            color: c.t1,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700)),
+                            color: c.t1, fontSize: 15, fontWeight: FontWeight.w700)),
                     const SizedBox(width: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                          color: c.longBg,
-                          borderRadius: BorderRadius.circular(4)),
+                          color: c.accentBg, borderRadius: BorderRadius.circular(4)),
                       child: Text('ACTIVE',
                           style: TextStyle(
-                              color: c.long,
+                              color: c.accent,
                               fontSize: 9,
                               fontWeight: FontWeight.w800,
                               letterSpacing: 0.8)),
                     ),
                   ],
                 ),
-                const SizedBox(height: 2),
-                Text('Renews Jul 24, 2026 · \$29/mo',
-                    style: TextStyle(color: c.t2, fontSize: 12)),
-                const SizedBox(height: 8),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(3),
-                  child: LinearProgressIndicator(
-                    value: 0.73,
-                    backgroundColor: c.border,
-                    valueColor: AlwaysStoppedAnimation<Color>(c.gold),
-                    minHeight: 3,
-                  ),
-                ),
                 const SizedBox(height: 3),
-                Text('22 days remaining',
-                    style: TextStyle(color: c.t3, fontSize: 10)),
+                Text('All signals free during MVP launch',
+                    style: TextStyle(color: c.t2, fontSize: 12)),
+                const SizedBox(height: 6),
+                Text('Full access · No credit card required',
+                    style: TextStyle(color: c.t3, fontSize: 11)),
               ],
             ),
           ),
-          const SizedBox(width: 8),
-          Icon(Icons.chevron_right_rounded, color: c.t3, size: 18),
         ],
       ),
     );
   }
 }
 
-// Stats derived from real signal data
 class _StatsCard extends StatelessWidget {
-  const _StatsCard();
+  final SignalStats stats;
+  final bool loading;
+  const _StatsCard({required this.stats, required this.loading});
 
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final stats = signalStats;
-
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -190,59 +220,53 @@ class _StatsCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('90-Day Statistics',
-                  style: TextStyle(
-                      color: c.t1, fontSize: 15, fontWeight: FontWeight.w700)),
-              Text('Last 3 months',
-                  style: TextStyle(color: c.t3, fontSize: 11)),
+              Text('Signal Statistics',
+                  style: TextStyle(color: c.t1, fontSize: 15, fontWeight: FontWeight.w700)),
+              Text('Last 90 days', style: TextStyle(color: c.t3, fontSize: 11)),
             ],
           ),
           const SizedBox(height: 16),
-          Row(
-            children: [
-              _StatItem(
-                  value: '${stats.total}',
-                  label: 'Total\nSignals',
-                  color: c.accent),
-              _VDivider(),
-              _StatItem(
-                  value: '${stats.wins}',
-                  label: 'Signals\nWon',
-                  color: c.long),
-              _VDivider(),
-              _StatItem(
-                  value: '${stats.losses}',
-                  label: 'Signals\nLost',
-                  color: c.short),
-              _VDivider(),
-              _StatItem(
-                  value: '${(stats.winRate * 100).toStringAsFixed(0)}%',
-                  label: 'Win\nRate',
-                  color: stats.winRate >= 0.6 ? c.long : c.gold),
-            ],
-          ),
-          const SizedBox(height: 14),
-          // Win/loss bar
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: SizedBox(
-              height: 5,
-              child: Row(
-                children: [
-                  if (stats.wins > 0)
-                    Flexible(flex: stats.wins, child: Container(color: c.long)),
-                  if (stats.wins > 0 && stats.losses > 0)
-                    const SizedBox(width: 2),
-                  if (stats.losses > 0)
-                    Flexible(
-                        flex: stats.losses, child: Container(color: c.short)),
-                ],
-              ),
+          if (loading)
+            const Center(child: Padding(padding: EdgeInsets.all(12), child: CircularProgressIndicator()))
+          else ...[
+            Row(
+              children: [
+                _StatItem(value: '${stats.total}',  label: 'Total\nSignals', color: c.accent),
+                _VDivider(),
+                _StatItem(value: '${stats.wins}',   label: 'Signals\nWon',  color: c.long),
+                _VDivider(),
+                _StatItem(value: '${stats.losses}', label: 'Signals\nLost', color: c.short),
+                _VDivider(),
+                _StatItem(
+                    value: '${(stats.winRate * 100).toStringAsFixed(0)}%',
+                    label: 'Win\nRate',
+                    color: stats.winRate >= 0.6 ? c.long : c.gold),
+              ],
             ),
-          ),
-          const SizedBox(height: 6),
-          Text('Based on ${stats.closed} closed signals',
-              style: TextStyle(color: c.t3, fontSize: 11)),
+            if (stats.closed > 0) ...[
+              const SizedBox(height: 14),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: SizedBox(
+                  height: 5,
+                  child: Row(
+                    children: [
+                      Flexible(flex: stats.wins,   child: Container(color: c.long)),
+                      const SizedBox(width: 2),
+                      Flexible(flex: stats.losses, child: Container(color: c.short)),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text('Based on ${stats.closed} closed signals',
+                  style: TextStyle(color: c.t3, fontSize: 11)),
+            ] else ...[
+              const SizedBox(height: 10),
+              Text('No closed signals yet — check back after signals resolve.',
+                  style: TextStyle(color: c.t3, fontSize: 12)),
+            ],
+          ],
         ],
       ),
     );
@@ -253,9 +277,7 @@ class _StatItem extends StatelessWidget {
   final String value;
   final String label;
   final Color color;
-
-  const _StatItem(
-      {required this.value, required this.label, required this.color});
+  const _StatItem({required this.value, required this.label, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -265,10 +287,7 @@ class _StatItem extends StatelessWidget {
         children: [
           Text(value,
               style: TextStyle(
-                  color: color,
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.3)),
+                  color: color, fontSize: 20, fontWeight: FontWeight.w800, letterSpacing: -0.3)),
           const SizedBox(height: 3),
           Text(label,
               textAlign: TextAlign.center,
@@ -284,9 +303,7 @@ class _VDivider extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     return Container(
-        width: 1,
-        height: 44,
-        color: c.border,
+        width: 1, height: 44, color: c.border,
         margin: const EdgeInsets.symmetric(horizontal: 6));
   }
 }
@@ -298,11 +315,10 @@ class _MenuCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final items = [
-      (Icons.notifications_outlined, 'Notifications', 'Alerts & push settings', c.accent, null),
-      (Icons.workspace_premium_outlined, 'Subscription', 'Pro · Renews Jul 2026', c.gold, null),
-      (Icons.warning_amber_rounded, 'Risk Disclaimer', 'Read before trading', const Color(0xFFF59E0B), '/disclaimer/info'),
-      (Icons.help_outline_rounded, 'Help & Support', 'FAQs, live chat', c.long, null),
-      (Icons.info_outline_rounded, 'About', 'Version 1.0.0', c.t2, null),
+      (Icons.notifications_outlined,  'Notifications',   'Push alerts for new signals',  c.accent, null as String?),
+      (Icons.warning_amber_rounded,   'Risk Disclaimer', 'Read before trading',           const Color(0xFFF59E0B), '/disclaimer/info'),
+      (Icons.help_outline_rounded,    'Help & Support',  'FAQs and feedback',             c.long, null),
+      (Icons.info_outline_rounded,    'About',           'TradePilot v1.0.0 · MVP',       c.t2, null),
     ];
 
     return Container(
@@ -318,10 +334,7 @@ class _MenuCard extends StatelessWidget {
           return Column(
             children: [
               _MenuRow(
-                icon: icon,
-                label: label,
-                sub: sub,
-                color: color,
+                icon: icon, label: label, sub: sub, color: color,
                 onTap: route != null
                     ? () => Navigator.of(context).pushNamed(route)
                     : null,
@@ -343,11 +356,8 @@ class _MenuRow extends StatelessWidget {
   final VoidCallback? onTap;
 
   const _MenuRow({
-    required this.icon,
-    required this.label,
-    required this.sub,
-    required this.color,
-    this.onTap,
+    required this.icon, required this.label,
+    required this.sub,  required this.color, this.onTap,
   });
 
   @override
@@ -361,8 +371,7 @@ class _MenuRow extends StatelessWidget {
         child: Row(
           children: [
             Container(
-              width: 38,
-              height: 38,
+              width: 38, height: 38,
               decoration: BoxDecoration(
                 color: color.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10),
