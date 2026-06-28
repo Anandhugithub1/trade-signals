@@ -33,9 +33,9 @@ except ImportError:
 SUPABASE_URL         = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
-BINANCE_FUTURES    = "https://fapi.binance.com/fapi/v1/klines"  # USDT-M Futures (may geo-block)
-BYBIT_KLINES       = "https://api.bybit.com/v5/market/kline"    # Bybit perpetual (2nd try)
-BINANCE_SPOT       = "https://api.binance.com/api/v3/klines"    # Spot fallback — least restricted
+BINANCE_FUTURES    = "https://fapi.binance.com/fapi/v1/klines"   # USDT-M Futures (blocked in US/India)
+BYBIT_KLINES       = "https://api.bybit.com/v5/market/kline"     # Bybit perpetual (blocked on Azure)
+OKX_KLINES         = "https://www.okx.com/api/v5/market/candles" # OKX — US-accessible, no geo-block
 _HEADERS           = {"User-Agent": "TradePilot/1.0 signal-bot"}
 SIGNAL_EXPIRY_DAYS = 14
 HOUR_MS            = 3_600_000
@@ -64,18 +64,23 @@ def ms_to_utc(ms: int) -> str:
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
+def _okx_symbol(pair: str) -> str:
+    """BTCUSDT → BTC-USDT  (OKX instId format)"""
+    return pair[:-4] + "-USDT"
+
+
 def fetch_candles(symbol: str, signal_ms: int) -> list:
     """
     Fetch 1-hour OHLCV candles — three-provider fallback chain.
 
-    All three return the same index layout used throughout this script:
+    All three share the same index layout:
       [0] open_time_ms  [2] high  [3] low  [4] close  [5] volume
-    Bybit returns newest-first so its result is reversed before returning.
+    Bybit and OKX return newest-first so their results are reversed.
 
     Provider chain:
-      1. Binance Futures  (fapi.binance.com) — best data; geo-blocked on some IPs
-      2. Bybit Futures    (api.bybit.com)    — blocked on certain cloud IP ranges
-      3. Binance Spot     (api.binance.com)  — least restricted; prices ≈ futures
+      1. Binance Futures  fapi.binance.com  — blocked in US & India (451)
+      2. Bybit Futures    api.bybit.com     — blocked on Azure cloud IPs (403)
+      3. OKX              www.okx.com       — US-accessible, no geo-block ✓
     """
     start = (signal_ms // HOUR_MS) * HOUR_MS
     end   = now_ms()
@@ -104,19 +109,20 @@ def fetch_candles(symbol: str, signal_ms: int) -> list:
         )
         if r.status_code == 200:
             return list(reversed(r.json()["result"]["list"]))
-        print(f"  [WARN] Bybit {r.status_code} for {symbol} — trying Binance Spot")
+        print(f"  [WARN] Bybit {r.status_code} for {symbol} — trying OKX")
     except Exception as e:
-        print(f"  [WARN] Bybit error for {symbol} ({e}) — trying Binance Spot")
+        print(f"  [WARN] Bybit error for {symbol} ({e}) — trying OKX")
 
-    # 3. Binance Spot (final fallback)
+    # 3. OKX (US-accessible, identical index format, no geo-block)
+    # OKX doesn't support time filtering on candles for 1h in the same way,
+    # so we fetch the max and slice to the signal window after.
     r = requests.get(
-        BINANCE_SPOT,
-        params={"symbol": symbol, "interval": "1h",
-                "startTime": start, "endTime": end, "limit": 500},
+        OKX_KLINES,
+        params={"instId": _okx_symbol(symbol), "bar": "1H", "limit": 500},
         headers=_HEADERS, timeout=10,
     )
     r.raise_for_status()
-    return r.json()
+    return list(reversed(r.json()["data"]))   # OKX newest-first → reverse
 
 
 def evaluate_signal(signal: dict, candles: list, signal_ms: int) -> tuple:

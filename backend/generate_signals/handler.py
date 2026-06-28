@@ -49,9 +49,9 @@ SUPABASE_URL         = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 CRYPTOPANIC_KEY      = os.environ.get("CRYPTOPANIC_API_KEY", "")
 
-BINANCE_FUTURES = "https://fapi.binance.com/fapi/v1/klines"  # USDT-M Futures (may geo-block)
-BYBIT_KLINES    = "https://api.bybit.com/v5/market/kline"    # Bybit perpetual (2nd try)
-BINANCE_SPOT    = "https://api.binance.com/api/v3/klines"    # Spot fallback — least restricted
+BINANCE_FUTURES = "https://fapi.binance.com/fapi/v1/klines"     # USDT-M Futures (geo-blocked in US/India)
+BYBIT_KLINES    = "https://api.bybit.com/v5/market/kline"       # Bybit perpetual (blocked on some cloud IPs)
+OKX_KLINES      = "https://www.okx.com/api/v5/market/candles"   # OKX spot/swap — US-accessible, no geo-block
 FEAR_GREED_URL  = "https://api.alternative.me/fng/?limit=1"
 
 # Sent with every candle request so cloud-hosted runners aren't blocked as bots
@@ -156,18 +156,23 @@ def volume_ratio(vol: np.ndarray, period: int = 20) -> float:
     return float(vol[-1] / avg) if avg > 0 else 1.0
 
 
+def _okx_symbol(pair: str) -> str:
+    """BTCUSDT → BTC-USDT  (OKX instId format)"""
+    return pair[:-4] + "-USDT"
+
+
 def fetch_candles(symbol: str) -> list:
     """
     Fetch 4-hour OHLCV candles — three-provider fallback chain.
 
-    All three return the same index layout used throughout this script:
+    All three share the same index layout:
       [0] open_time_ms  [1] open  [2] high  [3] low  [4] close  [5] volume
-    Bybit returns newest-first so its result is reversed before returning.
+    Bybit and OKX return newest-first so their results are reversed.
 
     Provider chain:
-      1. Binance Futures  (fapi.binance.com) — best data; geo-blocked on some IPs
-      2. Bybit Futures    (api.bybit.com)    — blocked on certain cloud IP ranges
-      3. Binance Spot     (api.binance.com)  — least restricted; prices ≈ futures
+      1. Binance Futures  fapi.binance.com  — blocked in US & India (451)
+      2. Bybit Futures    api.bybit.com     — blocked on Azure cloud IPs (403)
+      3. OKX              www.okx.com       — US-accessible, no geo-block ✓
     """
     # 1. Binance Futures
     try:
@@ -192,18 +197,18 @@ def fetch_candles(symbol: str) -> list:
         )
         if r.status_code == 200:
             return list(reversed(r.json()["result"]["list"]))
-        print(f"  [WARN] Bybit {r.status_code} for {symbol} — trying Binance Spot")
+        print(f"  [WARN] Bybit {r.status_code} for {symbol} — trying OKX")
     except Exception as e:
-        print(f"  [WARN] Bybit error for {symbol} ({e}) — trying Binance Spot")
+        print(f"  [WARN] Bybit error for {symbol} ({e}) — trying OKX")
 
-    # 3. Binance Spot (final fallback — spot price ≈ futures for major pairs)
+    # 3. OKX (US-accessible, identical index format, no geo-block)
     r = requests.get(
-        BINANCE_SPOT,
-        params={"symbol": symbol, "interval": "4h", "limit": CANDLE_LIMIT},
+        OKX_KLINES,
+        params={"instId": _okx_symbol(symbol), "bar": "4H", "limit": CANDLE_LIMIT},
         headers=_HEADERS, timeout=10,
     )
     r.raise_for_status()
-    return r.json()
+    return list(reversed(r.json()["data"]))   # OKX newest-first → reverse
 
 
 # ── external sentiment ────────────────────────────────────────────────────────
