@@ -34,6 +34,7 @@ import json
 import os
 import uuid
 import requests
+import feedparser
 import numpy as np
 from datetime import datetime, timezone, timedelta
 from supabase import create_client, Client
@@ -47,16 +48,15 @@ except ImportError:
 # ── config ────────────────────────────────────────────────────────────────────
 SUPABASE_URL         = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-CRYPTOPANIC_KEY      = os.environ.get("CRYPTOPANIC_API_KEY", "")
 
-BINANCE_FUTURES = "https://fapi.binance.com/fapi/v1/klines"     # USDT-M Futures (geo-blocked in US/India)
-BYBIT_KLINES    = "https://api.bybit.com/v5/market/kline"       # Bybit perpetual (blocked on some cloud IPs)
-OKX_KLINES      = "https://www.okx.com/api/v5/market/candles"   # OKX spot/swap — US-accessible, no geo-block
-FEAR_GREED_URL  = "https://api.alternative.me/fng/?limit=1"
+BINANCE_FUTURES  = "https://fapi.binance.com/fapi/v1/klines"
+BYBIT_KLINES     = "https://api.bybit.com/v5/market/kline"
+OKX_KLINES       = "https://www.okx.com/api/v5/market/candles"
+FEAR_GREED_URL   = "https://api.alternative.me/fng/?limit=1"
+GOOGLE_NEWS_RSS  = "https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q={coin}+cryptocurrency"
+COINDESK_RSS     = "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml"
 
-# Sent with every candle request so cloud-hosted runners aren't blocked as bots
 _HEADERS = {"User-Agent": "TradePilot/1.0 signal-bot"}
-CRYPTOPANIC_URL = "https://cryptopanic.com/api/v1/posts/"
 
 # Top 10 by market cap (Binance perpetual pairs)
 TOP_PAIRS = [
@@ -233,39 +233,59 @@ def get_fear_greed() -> tuple[int, int, str]:
         return 0, -1, f"Fear/Greed unavailable ({exc})"
 
 
+_BULL_WORDS = {"surge","rally","bullish","breakout","gain","high","pump","rise","soar","record","up","green","buy","long","upside","positive","adoption","partnership","launch","approve","etf"}
+_BEAR_WORDS = {"crash","drop","bearish","fall","dump","low","fear","plunge","sell","short","ban","hack","fraud","loss","warning","risk","bear","decline","negative","lawsuit","regulation"}
+
+
+def _score_headlines(titles: list[str]) -> tuple[int, int]:
+    """Count bullish vs bearish keywords across a list of headline strings."""
+    bull = bear = 0
+    for t in titles:
+        words = set(t.lower().split())
+        bull += bool(words & _BULL_WORDS)
+        bear += bool(words & _BEAR_WORDS)
+    return bull, bear
+
+
 def get_news_sentiment(coin_sym: str) -> tuple[int, str]:
     """
-    Returns (+1 / -1 / 0, reason_str).
-    Requires CRYPTOPANIC_API_KEY.  Skipped if key is empty.
+    Scores news sentiment for a coin using two free RSS feeds:
+      1. Google News  — coin-specific headlines (no key, no limit)
+      2. CoinDesk RSS — top crypto news (no key, no limit)
+
+    Returns (+1 bullish / -1 bearish / 0 neutral, reason_str).
     """
-    if not CRYPTOPANIC_KEY:
-        return 0, "News: skipped (no CRYPTOPANIC_API_KEY)"
+    titles: list[str] = []
+
+    # 1. Google News — coin-specific
     try:
-        r = requests.get(
-            CRYPTOPANIC_URL,
-            params={"auth_token": CRYPTOPANIC_KEY,
-                    "currencies": coin_sym,
-                    "filter": "hot",
-                    "kind": "news"},
-            timeout=5,
-        )
-        r.raise_for_status()
-        posts = r.json().get("results", [])[:10]
-        if not posts:
-            return 0, f"News: no recent posts for {coin_sym}"
+        url  = GOOGLE_NEWS_RSS.format(coin=coin_sym)
+        feed = feedparser.parse(url)
+        titles += [e.title for e in feed.entries[:10]]
+    except Exception:
+        pass
 
-        bull = sum(1 for p in posts
-                   if p.get("votes", {}).get("positive", 0) >
-                      p.get("votes", {}).get("negative", 0))
-        bear = len(posts) - bull
+    # 2. CoinDesk RSS — general market headlines (filter for coin name)
+    try:
+        feed = feedparser.parse(COINDESK_RSS)
+        titles += [
+            e.title for e in feed.entries[:20]
+            if coin_sym.replace("USDT", "").lower() in e.title.lower()
+        ]
+    except Exception:
+        pass
 
-        if bull >= bear * 2:
-            return 1, f"News: bullish ({bull} pos / {bear} neg)"
-        if bear >= bull * 2:
-            return -1, f"News: bearish ({bear} neg / {bull} pos)"
-        return 0, f"News: mixed ({bull} pos / {bear} neg)"
-    except Exception as exc:
-        return 0, f"News: error ({exc})"
+    if not titles:
+        return 0, "News: no headlines found"
+
+    bull, bear = _score_headlines(titles)
+    total = len(titles)
+
+    if bull > bear + 2:
+        return 1,  f"News: bullish  ({bull} bull / {bear} bear from {total} headlines)"
+    if bear > bull + 2:
+        return -1, f"News: bearish  ({bear} bear / {bull} bull from {total} headlines)"
+    return 0, f"News: neutral  ({bull} bull / {bear} bear from {total} headlines)"
 
 
 # ── signal engine ─────────────────────────────────────────────────────────────
