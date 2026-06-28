@@ -1,33 +1,46 @@
 """
 generate_signals — creates trade signals for the top 10 crypto pairs
-by market cap using technical analysis + market sentiment.
+by market cap using technical analysis + multi-source sentiment.
 
-Data sources (all free):
-  Binance REST API   — OHLCV candles (no key required)
-  Alternative.me     — Fear & Greed Index (no key required)
-  CryptoPanic API    — per-coin news sentiment (free key, optional)
+═══════════════════════════════════════════════════════════════════
+ DATA SOURCES  (all free, no API keys required)
+═══════════════════════════════════════════════════════════════════
+  Candles        Binance Futures → Bybit → OKX  (geo-fallback chain)
+  Sentiment      Alternative.me Fear & Greed Index
+  Market data    CoinGecko global market cap & dominance
+  Derivatives    OKX funding rate + long/short ratio  (per pair)
+  Coin news      Google News RSS + CoinDesk RSS
+  Macro events   Google News RSS + Reuters  (Fed / rates / wars)
 
-Technical indicators:
-  RSI(14)            — momentum / overbought-oversold
-  MACD(12,26,9)      — trend + crossover signal
-  EMA 50 / 200       — trend direction / golden-cross zone
-  Bollinger Bands    — price extremes vs recent volatility
-  Volume spike       — confirms signal strength
-  ATR(14)            — sizes Stop Loss and Take Profit
+═══════════════════════════════════════════════════════════════════
+ VOTING TABLE  (each indicator casts +1 / -1 / 0)
+═══════════════════════════════════════════════════════════════════
+  #   Indicator            Bullish (+1)           Bearish (-1)
+  ─── ──────────────────   ─────────────────────  ────────────────────
+  1   RSI(14)              < 35 oversold           > 65 overbought
+  2   Stochastic RSI       < 0.20 oversold         > 0.80 overbought
+  3   Williams %R          < -80 oversold          > -20 overbought
+  4   MACD histogram       positive momentum       negative momentum
+  5   MACD crossover       histogram flipped +     histogram flipped −  [bonus]
+  6   EMA 200              price above             price below
+  7   EMA 50               price above             price below
+  8   EMA 20/50 cross      EMA20 > EMA50           EMA20 < EMA50
+  9   Bollinger %B         < 0.20 low band         > 0.80 high band
+  10  OBV slope            trending up             trending down
+  11  Volume spike         > 1.5× avg trend        (amplifies dominant bias)
+  12  Fear & Greed         extreme fear            extreme greed
+  13  Global mkt cap       24h change > +3 %       24h change < -3 %
+  14  Funding rate         negative (shorts pay)   positive (longs pay)
+  15  Long/Short ratio     LSR < 0.8  (over-shorted)  LSR > 1.5 (over-longed)
+  16  Coin news            bullish headlines        bearish headlines
+  17  Macro events         rate cut/ceasefire       rate hike/war/recession
+  ─── ──────────────────   ─────────────────────  ────────────────────
 
-Sentiment layer:
-  Fear & Greed Index — market-wide contrarian signal
-  CryptoPanic news   — coin-specific positive/negative news flow
+  LONG  signal when net score >= MIN_BULL_SCORE  (4)
+  SHORT signal when net score <= -MIN_BEAR_SCORE (4)
+  Confidence = score ratio → 60–95 %
 
-Signal logic:
-  Each indicator votes +1 (bullish) or -1 (bearish).
-  LONG  if total score >=  MIN_BULL_SCORE
-  SHORT if total score <= -MIN_BEAR_SCORE
-  Skip  otherwise
-
-  Confidence = maps score ratio → 60–95 %
-
-Trigger: run once or twice a day.
+Trigger: 3× per day via GitHub Actions cron.
 """
 
 import json
@@ -52,6 +65,9 @@ SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 BINANCE_FUTURES  = "https://fapi.binance.com/fapi/v1/klines"
 BYBIT_KLINES     = "https://api.bybit.com/v5/market/kline"
 OKX_KLINES       = "https://www.okx.com/api/v5/market/candles"
+OKX_FUNDING      = "https://www.okx.com/api/v5/public/funding-rate"
+OKX_LSR          = "https://www.okx.com/api/v5/rubik/stat/contracts/long-short-account-ratio"
+COINGECKO_GLOBAL = "https://api.coingecko.com/api/v3/global"
 FEAR_GREED_URL   = "https://api.alternative.me/fng/?limit=1"
 GOOGLE_NEWS_RSS  = "https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q={coin}+cryptocurrency"
 COINDESK_RSS     = "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml"
@@ -89,8 +105,8 @@ TOP_PAIRS = [
     "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT",
 ]
 
-MIN_BULL_SCORE       = 3    # net bullish votes required for LONG
-MIN_BEAR_SCORE       = 3    # net bearish votes required for SHORT
+MIN_BULL_SCORE       = 4    # net bullish votes required for LONG  (raised: 17 indicators now)
+MIN_BEAR_SCORE       = 4    # net bearish votes required for SHORT
 MIN_SIGNAL_CONFIDENCE = 72  # signals below this % are discarded (low conviction)
 MAX_SIGNALS          = 3    # insert at most this many signals per run
 ATR_SL_MULT          = 2.0  # SL = entry ± (ATR_SL_MULT × ATR)
@@ -153,6 +169,52 @@ def calc_atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int =
                    np.abs(low[1:] - close[:-1]))
     )
     return float(np.mean(tr[-period:]))
+
+
+def calc_stoch_rsi(close: np.ndarray, rsi_period: int = 14, stoch_period: int = 14) -> float:
+    """Stochastic RSI — 0 (oversold) to 1 (overbought). More sensitive than plain RSI."""
+    # Build RSI series for entire close array
+    delta = np.diff(close.astype(float))
+    gain  = np.where(delta > 0, delta, 0.0)
+    loss  = np.where(delta < 0, -delta, 0.0)
+    avg_g = np.mean(gain[:rsi_period])
+    avg_l = np.mean(loss[:rsi_period])
+    rsi_vals = np.empty(len(close))
+    rsi_vals[:rsi_period + 1] = np.nan
+    for i in range(rsi_period, len(delta)):
+        avg_g = (avg_g * (rsi_period - 1) + gain[i]) / rsi_period
+        avg_l = (avg_l * (rsi_period - 1) + loss[i]) / rsi_period
+        rs = avg_g / avg_l if avg_l != 0 else 1e9
+        rsi_vals[i + 1] = 100.0 - 100.0 / (1.0 + rs)
+    rsi_clean = rsi_vals[~np.isnan(rsi_vals)]
+    if len(rsi_clean) < stoch_period:
+        return 0.5
+    window = rsi_clean[-stoch_period:]
+    lo, hi = window.min(), window.max()
+    return float((rsi_clean[-1] - lo) / (hi - lo)) if hi != lo else 0.5
+
+
+def calc_williams_r(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> float:
+    """Williams %R — -100 (oversold) to 0 (overbought)."""
+    hh = np.max(high[-period:])
+    ll = np.min(low[-period:])
+    return float(-100.0 * (hh - close[-1]) / (hh - ll)) if hh != ll else -50.0
+
+
+def calc_obv_slope(close: np.ndarray, vol: np.ndarray, period: int = 20) -> float:
+    """
+    On-Balance Volume linear-regression slope over `period` candles.
+    Positive = OBV trending up (volume confirming price rise).
+    Negative = OBV trending down (volume confirming price fall).
+    """
+    obv = np.zeros(len(close))
+    for i in range(1, len(close)):
+        obv[i] = obv[i-1] + (vol[i] if close[i] > close[i-1] else
+                              -vol[i] if close[i] < close[i-1] else 0)
+    window = obv[-period:]
+    x = np.arange(len(window), dtype=float)
+    slope = np.polyfit(x, window, 1)[0]
+    return float(slope)
 
 
 def calc_expiry_days(confidence: int, rr_ratio: float) -> int:
@@ -353,11 +415,81 @@ def get_macro_sentiment() -> tuple[int, str]:
     return 0, f"Macro: neutral  ({bull} bull / {bear} bear macro keywords)"
 
 
+def get_market_cap_change() -> tuple[int, str]:
+    """
+    CoinGecko global crypto market cap 24h change.
+    A strong positive move = broad risk-on (+1).
+    A strong negative move = broad risk-off (-1).
+    """
+    try:
+        r = requests.get(COINGECKO_GLOBAL, headers=_HEADERS, timeout=6)
+        if r.status_code == 200:
+            chg = r.json()["data"]["market_cap_change_percentage_24h_usd"]
+            if chg > 3:
+                return 1,  f"Global mkt cap +{chg:.1f}% 24h (risk-on)"
+            if chg < -3:
+                return -1, f"Global mkt cap {chg:.1f}% 24h (risk-off)"
+            return 0,  f"Global mkt cap {chg:+.1f}% 24h (neutral)"
+    except Exception as e:
+        pass
+    return 0, "Global mkt cap: unavailable"
+
+
+def get_funding_rate(pair: str) -> tuple[int, str]:
+    """
+    OKX perpetual funding rate — free, no key.
+    Negative rate → shorts paying longs → over-shorted → contrarian BULLISH.
+    Positive rate → longs paying shorts → over-longed  → contrarian BEARISH.
+    Threshold: ±0.03% (3× normal 0.01% baseline).
+    """
+    instId = pair[:-4] + "-USDT-SWAP"   # BTCUSDT → BTC-USDT-SWAP
+    try:
+        r = requests.get(OKX_FUNDING, params={"instId": instId},
+                         headers=_HEADERS, timeout=5)
+        if r.status_code == 200 and r.json().get("data"):
+            rate = float(r.json()["data"][0]["fundingRate"])
+            pct  = rate * 100
+            if rate < -0.0003:
+                return 1,  f"Funding rate {pct:.4f}% — shorts paying (contrarian bullish)"
+            if rate > 0.0003:
+                return -1, f"Funding rate {pct:.4f}% — longs paying  (contrarian bearish)"
+            return 0, f"Funding rate {pct:.4f}% — neutral"
+    except Exception:
+        pass
+    return 0, "Funding rate: unavailable"
+
+
+def get_long_short_ratio(pair: str) -> tuple[int, str]:
+    """
+    OKX long/short account ratio — free, no key.
+    LSR < 0.8 → market is over-shorted → contrarian BULLISH.
+    LSR > 1.5 → market is over-longed  → contrarian BEARISH.
+    """
+    instId = pair[:-4] + "-USDT-SWAP"
+    try:
+        r = requests.get(OKX_LSR,
+                         params={"instId": instId, "period": "1H"},
+                         headers=_HEADERS, timeout=5)
+        if r.status_code == 200 and r.json().get("data"):
+            lsr = float(r.json()["data"][0][1])
+            if lsr < 0.8:
+                return 1,  f"L/S ratio {lsr:.2f} — over-shorted (contrarian bullish)"
+            if lsr > 1.5:
+                return -1, f"L/S ratio {lsr:.2f} — over-longed  (contrarian bearish)"
+            return 0, f"L/S ratio {lsr:.2f} — balanced"
+    except Exception:
+        pass
+    return 0, "L/S ratio: unavailable"
+
+
 # ── signal engine ─────────────────────────────────────────────────────────────
 
 def analyze_pair(pair: str, candles: list,
                  fear_greed_score: int, fear_greed_reason: str,
-                 macro_score: int = 0, macro_reason: str = "") -> dict | None:
+                 macro_score: int = 0, macro_reason: str = "",
+                 market_cap_score: int = 0, market_cap_reason: str = "",
+                 funding_score: int = 0, funding_reason: str = "",
+                 lsr_score: int = 0, lsr_reason: str = "") -> dict | None:
     """
     Score a pair across all indicators and return a signal dict, or None.
 
@@ -389,7 +521,7 @@ def analyze_pair(pair: str, candles: list,
     score   = 0
     votes   = []   # (indicator, vote, reason_str)
 
-    # 1. RSI
+    # 1. RSI(14)
     rsi_val = calc_rsi(close)
     if rsi_val < 35:
         score += 1; votes.append(("RSI", +1, f"RSI {rsi_val:.1f} — oversold"))
@@ -397,6 +529,24 @@ def analyze_pair(pair: str, candles: list,
         score -= 1; votes.append(("RSI", -1, f"RSI {rsi_val:.1f} — overbought"))
     else:
         votes.append(("RSI",  0, f"RSI {rsi_val:.1f} — neutral"))
+
+    # 2. Stochastic RSI — more sensitive, good for extreme detection
+    srsi = calc_stoch_rsi(close)
+    if srsi < 0.20:
+        score += 1; votes.append(("StochRSI", +1, f"StochRSI {srsi:.2f} — oversold"))
+    elif srsi > 0.80:
+        score -= 1; votes.append(("StochRSI", -1, f"StochRSI {srsi:.2f} — overbought"))
+    else:
+        votes.append(("StochRSI", 0, f"StochRSI {srsi:.2f} — neutral"))
+
+    # 3. Williams %R — momentum oscillator
+    wr = calc_williams_r(high, low, close)
+    if wr < -80:
+        score += 1; votes.append(("Williams%R", +1, f"W%R {wr:.1f} — oversold"))
+    elif wr > -20:
+        score -= 1; votes.append(("Williams%R", -1, f"W%R {wr:.1f} — overbought"))
+    else:
+        votes.append(("Williams%R", 0, f"W%R {wr:.1f} — neutral"))
 
     # 2. MACD histogram direction
     _, _, hist_now, hist_prev = calc_macd(close)
@@ -418,14 +568,21 @@ def analyze_pair(pair: str, candles: list,
     else:
         score -= 1; votes.append(("EMA200", -1, f"price {price:,.4f} < EMA200 {ema200:,.4f}"))
 
-    # 5. EMA 50 — intermediate trend
+    # 6. EMA 50 — intermediate trend
     ema50 = calc_ema(close, 50)
     if price > ema50:
         score += 1; votes.append(("EMA50",  +1, f"price > EMA50 {ema50:,.4f}"))
     else:
         score -= 1; votes.append(("EMA50",  -1, f"price < EMA50 {ema50:,.4f}"))
 
-    # 6. Bollinger Bands
+    # 7. EMA 20/50 short-term crossover
+    ema20 = calc_ema(close, 20)
+    if ema20 > ema50:
+        score += 1; votes.append(("EMA20/50", +1, f"EMA20 {ema20:,.4f} > EMA50 — bullish cross"))
+    else:
+        score -= 1; votes.append(("EMA20/50", -1, f"EMA20 {ema20:,.4f} < EMA50 — bearish cross"))
+
+    # 8. Bollinger Bands
     bb_upper, bb_mid, bb_lower, pct_b = calc_bollinger(close)
     if pct_b < 0.20:
         score += 1; votes.append(("BB",  +1, f"%B={pct_b:.2f} — near lower band (potential reversal up)"))
@@ -434,7 +591,16 @@ def analyze_pair(pair: str, candles: list,
     else:
         votes.append(("BB",   0, f"%B={pct_b:.2f} — mid-band"))
 
-    # 7. Volume spike (amplifies the dominant trend)
+    # 9. OBV slope — volume confirms price trend
+    obv_slope = calc_obv_slope(close, vol)
+    if obv_slope > 0:
+        score += 1; votes.append(("OBV", +1, f"OBV slope {obv_slope:+.0f} — volume trending up"))
+    elif obv_slope < 0:
+        score -= 1; votes.append(("OBV", -1, f"OBV slope {obv_slope:+.0f} — volume trending down"))
+    else:
+        votes.append(("OBV", 0, "OBV slope flat"))
+
+    # 10. Volume spike (amplifies the dominant trend)
     vol_r = volume_ratio(vol)
     if vol_r >= 1.5:
         amp = 1 if score > 0 else (-1 if score < 0 else 0)
@@ -442,14 +608,35 @@ def analyze_pair(pair: str, candles: list,
         votes.append(("Volume", amp,
                       f"volume {vol_r:.2f}× avg — amplifies {'bullish' if amp > 0 else 'bearish' if amp < 0 else 'neutral'} bias"))
 
-    # 8. Fear & Greed
+    # 11. Fear & Greed
     if fear_greed_score != 0:
         score += fear_greed_score
         votes.append(("Fear/Greed", fear_greed_score, fear_greed_reason))
     else:
         votes.append(("Fear/Greed", 0, fear_greed_reason))
 
-    # 9. News (per-coin)
+    # 12. Global market cap change
+    if market_cap_score != 0:
+        score += market_cap_score
+        votes.append(("Mkt Cap", market_cap_score, market_cap_reason))
+    else:
+        votes.append(("Mkt Cap", 0, market_cap_reason or "Mkt cap: neutral"))
+
+    # 13. Funding rate — derivatives positioning
+    if funding_score != 0:
+        score += funding_score
+        votes.append(("Funding", funding_score, funding_reason))
+    else:
+        votes.append(("Funding", 0, funding_reason or "Funding rate: neutral"))
+
+    # 14. Long/Short ratio — derivatives positioning
+    if lsr_score != 0:
+        score += lsr_score
+        votes.append(("L/S Ratio", lsr_score, lsr_reason))
+    else:
+        votes.append(("L/S Ratio", 0, lsr_reason or "L/S ratio: balanced"))
+
+    # 15. Coin-specific news
     coin_sym = pair.replace("USDT", "")
     news_score, news_reason = get_news_sentiment(coin_sym)
     if news_score != 0:
@@ -458,7 +645,7 @@ def analyze_pair(pair: str, candles: list,
     else:
         votes.append(("News", 0, news_reason))
 
-    # 10. Macro events — Fed, interest rates, wars, geopolitics (same for all pairs)
+    # 16. Macro events — Fed, interest rates, wars, geopolitics
     if macro_score != 0:
         score += macro_score
         votes.append(("Macro", macro_score, macro_reason))
@@ -637,13 +824,16 @@ def handler(event=None, context=None):
 
     print(f"[generate_signals] Will create up to {slots_left} more signal(s) this run.\n")
 
-    # Fetch shared sentiment indicators once (apply to all pairs)
+    # ── Global indicators (fetched once, applied to all pairs) ───────────────
     fg_score, fg_raw, fg_reason = get_fear_greed()
     fg_label = fg_reason.split(" — ")[0] if " — " in fg_reason else fg_reason
-    print(f"  Fear & Greed : {fg_reason}")
+    print(f"  Fear & Greed  : {fg_reason}")
+
+    mc_score, mc_reason = get_market_cap_change()
+    print(f"  Market cap    : {mc_reason}")
 
     macro_score, macro_reason = get_macro_sentiment()
-    print(f"  Macro events : {macro_reason}\n")
+    print(f"  Macro events  : {macro_reason}\n")
 
     stats = {
         "analysed": 0, "inserted": 0,
@@ -674,8 +864,19 @@ def handler(event=None, context=None):
 
             candles = fetch_candles(pair)
 
+            # Per-pair derivatives data (OKX free, no key)
+            fr_score, fr_reason = get_funding_rate(pair)
+            ls_score, ls_reason = get_long_short_ratio(pair)
+
             stats["analysed"] += 1
-            analysis = analyze_pair(pair, candles, fg_score, fg_reason, macro_score, macro_reason)
+            analysis = analyze_pair(
+                pair, candles,
+                fg_score, fg_reason,
+                macro_score, macro_reason,
+                mc_score, mc_reason,
+                fr_score, fr_reason,
+                ls_score, ls_reason,
+            )
             analysis["pair"] = pair
             all_analyses.append(analysis)
 
