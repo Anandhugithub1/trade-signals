@@ -2,8 +2,10 @@ name: Generate Signals
 
 on:
   schedule:
-    - cron: '0 8 * * *'    # 8:00 AM UTC — Asian session open
-    - cron: '0 20 * * *'   # 8:00 PM UTC — US session open
+    - cron: '0 8 * * *'    # 8:00 AM UTC  — Asian session open
+    - cron: '0 14 * * *'   # 2:00 PM UTC  — European/London session
+    - cron: '0 20 * * *'   # 8:00 PM UTC  — US session open
+  # Each run checks how many signals exist today and only fills up to the 3-signal cap.
   workflow_dispatch:         # manual trigger from GitHub Actions tab
 
 jobs:

@@ -50,6 +50,7 @@ SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 CRYPTOPANIC_KEY      = os.environ.get("CRYPTOPANIC_API_KEY", "")
 
 BINANCE_KLINES  = "https://fapi.binance.com/fapi/v1/klines"  # USDT-M Futures perpetual
+BYBIT_KLINES    = "https://api.bybit.com/v5/market/kline"    # Bybit USDT perpetual (fallback)
 FEAR_GREED_URL  = "https://api.alternative.me/fng/?limit=1"
 CRYPTOPANIC_URL = "https://cryptopanic.com/api/v1/posts/"
 
@@ -149,6 +150,46 @@ def calc_expiry_days(confidence: int, rr_ratio: float) -> int:
 def volume_ratio(vol: np.ndarray, period: int = 20) -> float:
     avg = np.mean(vol[-period - 1:-1])
     return float(vol[-1] / avg) if avg > 0 else 1.0
+
+
+def fetch_candles(symbol: str) -> list:
+    """
+    Fetch 4-hour OHLCV candles.
+    Tries Binance Futures first; falls back to Bybit on HTTP 451/403
+    (Binance blocks certain cloud/geo IP ranges).
+
+    Both APIs return candles with the same index layout we use:
+      [0] open_time_ms  [2] high  [3] low  [4] close  [5] volume
+    Bybit returns newest-first so we reverse before returning.
+    """
+    # ── Binance attempt ───────────────────────────────────────────────────────
+    try:
+        resp = requests.get(
+            BINANCE_KLINES,
+            params={"symbol": symbol, "interval": "4h", "limit": CANDLE_LIMIT},
+            timeout=10,
+        )
+        if resp.status_code not in (451, 403):
+            resp.raise_for_status()
+            return resp.json()
+        print(f"  [WARN] Binance returned {resp.status_code} for {symbol} — falling back to Bybit")
+    except requests.RequestException as e:
+        print(f"  [WARN] Binance error for {symbol} ({e}) — falling back to Bybit")
+
+    # ── Bybit fallback ────────────────────────────────────────────────────────
+    resp = requests.get(
+        BYBIT_KLINES,
+        params={
+            "category": "linear",
+            "symbol":   symbol,
+            "interval": "240",         # 240 minutes = 4h
+            "limit":    CANDLE_LIMIT,
+        },
+        timeout=10,
+    )
+    resp.raise_for_status()
+    candles = resp.json()["result"]["list"]
+    return list(reversed(candles))     # Bybit is newest-first → reverse to oldest-first
 
 
 # ── external sentiment ────────────────────────────────────────────────────────
@@ -458,8 +499,30 @@ def _upsert_sentiment(supabase, analyses: list, fg_raw: int, fg_label: str) -> N
 def handler(event=None, context=None):
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-    print(f"\n[generate_signals] Started at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
-    print(f"[generate_signals] Analysing {len(TOP_PAIRS)} pairs\n")
+    now_utc   = datetime.now(timezone.utc)
+    today_str = now_utc.strftime("%Y-%m-%d %H:%M UTC")
+    print(f"\n[generate_signals] Started at {today_str}")
+
+    # ── Daily cap check ───────────────────────────────────────────────────────
+    # Count signals already created today (midnight UTC → now).
+    today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    today_rows  = (
+        supabase.table("trade_signals")
+        .select("id")
+        .gte("timestamp", today_start)
+        .execute()
+    )
+    today_count   = len(today_rows.data)
+    slots_left    = max(0, MAX_SIGNALS - today_count)
+
+    print(f"[generate_signals] Signals today: {today_count} / {MAX_SIGNALS}  "
+          f"(slots remaining: {slots_left})")
+
+    if slots_left == 0:
+        print(f"[generate_signals] Daily cap of {MAX_SIGNALS} already reached — skipping run.\n")
+        return {"statusCode": 200, "body": json.dumps({"skipped": True, "today_count": today_count})}
+
+    print(f"[generate_signals] Will create up to {slots_left} more signal(s) this run.\n")
 
     # Fetch shared Fear & Greed Index once
     fg_score, fg_raw, fg_reason = get_fear_greed()
@@ -470,6 +533,8 @@ def handler(event=None, context=None):
         "analysed": 0, "inserted": 0,
         "low_confidence": 0, "no_signal": 0,
         "skipped_existing": 0, "errors": [],
+        "today_count": today_count,
+        "slots_left": slots_left,
     }
 
     # ── Pass 1: analyse all pairs, collect valid candidates ───────────────────
@@ -491,13 +556,7 @@ def handler(event=None, context=None):
                 stats["skipped_existing"] += 1
                 continue
 
-            resp = requests.get(
-                BINANCE_KLINES,
-                params={"symbol": pair, "interval": "4h", "limit": CANDLE_LIMIT},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            candles = resp.json()
+            candles = fetch_candles(pair)
 
             stats["analysed"] += 1
             analysis = analyze_pair(pair, candles, fg_score, fg_reason)
@@ -527,14 +586,14 @@ def handler(event=None, context=None):
             print(f"\n  [ERR] {msg}")
             stats["errors"].append(msg)
 
-    # ── Pass 2: rank by confidence desc, keep only top MAX_SIGNALS ───────────
+    # ── Pass 2: rank by confidence desc, keep only up to slots_left ──────────
     candidates.sort(key=lambda a: a["signal"]["confidence"], reverse=True)
-    to_insert = candidates[:MAX_SIGNALS]
-    overflow  = candidates[MAX_SIGNALS:]
+    to_insert = candidates[:slots_left]
+    overflow  = candidates[slots_left:]
 
     if overflow:
         print(f"\n{SEP}")
-        print(f"  Dropped (exceed MAX_SIGNALS={MAX_SIGNALS} cap — kept higher confidence):")
+        print(f"  Dropped (exceed daily cap of {MAX_SIGNALS} — {today_count} already today):")
         for a in overflow:
             s = a["signal"]
             print(f"    {s['pair']:<12}  {s['direction'].upper():<5}  confidence={s['confidence']}%  — not inserted")
@@ -566,7 +625,7 @@ def handler(event=None, context=None):
 
     print(f"\n{SEP}")
     print(f"[generate_signals] Done")
-    print(f"  Inserted         : {stats['inserted']}  (cap={MAX_SIGNALS})")
+    print(f"  Inserted         : {stats['inserted']}  (daily cap={MAX_SIGNALS}, today total={today_count + stats['inserted']})")
     print(f"  Low confidence   : {stats['low_confidence']}  (below {MIN_SIGNAL_CONFIDENCE}%)")
     print(f"  No signal        : {stats['no_signal']}")
     print(f"  Already pending  : {stats['skipped_existing']}")

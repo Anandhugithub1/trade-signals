@@ -34,6 +34,7 @@ SUPABASE_URL         = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
 BINANCE_KLINES     = "https://fapi.binance.com/fapi/v1/klines"  # USDT-M Futures perpetual
+BYBIT_KLINES       = "https://api.bybit.com/v5/market/kline"    # Bybit USDT perpetual (fallback)
 SIGNAL_EXPIRY_DAYS = 14
 HOUR_MS            = 3_600_000
 SEP                = "-" * 60
@@ -63,21 +64,48 @@ def ms_to_utc(ms: int) -> str:
 
 def fetch_candles(symbol: str, signal_ms: int) -> list:
     """
-    Fetch 1-hour OHLC candles (UTC) from Binance.
-    startTime is floored to the nearest hour so the candle that was open
-    when the signal was posted is included.
-    endTime is capped at now.
+    Fetch 1-hour OHLCV candles.
+    Tries Binance Futures first; falls back to Bybit on HTTP 451/403
+    (Binance blocks certain cloud/geo IP ranges including GitHub Actions).
+
+    Both APIs return the same index layout we use:
+      [0] open_time_ms  [2] high  [3] low  [4] close  [5] volume
+    Bybit returns newest-first so we reverse before returning.
     """
     start = (signal_ms // HOUR_MS) * HOUR_MS
     end   = now_ms()
-    resp  = requests.get(
-        BINANCE_KLINES,
-        params={"symbol": symbol, "interval": "1h",
-                "startTime": start, "endTime": end, "limit": 500},
+
+    # ── Binance attempt ───────────────────────────────────────────────────────
+    try:
+        resp = requests.get(
+            BINANCE_KLINES,
+            params={"symbol": symbol, "interval": "1h",
+                    "startTime": start, "endTime": end, "limit": 500},
+            timeout=10,
+        )
+        if resp.status_code not in (451, 403):
+            resp.raise_for_status()
+            return resp.json()
+        print(f"  [WARN] Binance {resp.status_code} for {symbol} — falling back to Bybit")
+    except requests.RequestException as e:
+        print(f"  [WARN] Binance error for {symbol} ({e}) — falling back to Bybit")
+
+    # ── Bybit fallback ────────────────────────────────────────────────────────
+    resp = requests.get(
+        BYBIT_KLINES,
+        params={
+            "category": "linear",
+            "symbol":   symbol,
+            "interval": "60",          # 60 minutes = 1h
+            "start":    start,
+            "end":      end,
+            "limit":    500,
+        },
         timeout=10,
     )
     resp.raise_for_status()
-    return resp.json()
+    candles = resp.json()["result"]["list"]
+    return list(reversed(candles))     # Bybit is newest-first → reverse to oldest-first
 
 
 def evaluate_signal(signal: dict, candles: list, signal_ms: int) -> tuple:
