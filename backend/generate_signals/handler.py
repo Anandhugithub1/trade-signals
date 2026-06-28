@@ -49,9 +49,13 @@ SUPABASE_URL         = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 CRYPTOPANIC_KEY      = os.environ.get("CRYPTOPANIC_API_KEY", "")
 
-BINANCE_KLINES  = "https://fapi.binance.com/fapi/v1/klines"  # USDT-M Futures perpetual
-BYBIT_KLINES    = "https://api.bybit.com/v5/market/kline"    # Bybit USDT perpetual (fallback)
+BINANCE_FUTURES = "https://fapi.binance.com/fapi/v1/klines"  # USDT-M Futures (may geo-block)
+BYBIT_KLINES    = "https://api.bybit.com/v5/market/kline"    # Bybit perpetual (2nd try)
+BINANCE_SPOT    = "https://api.binance.com/api/v3/klines"    # Spot fallback — least restricted
 FEAR_GREED_URL  = "https://api.alternative.me/fng/?limit=1"
+
+# Sent with every candle request so cloud-hosted runners aren't blocked as bots
+_HEADERS = {"User-Agent": "TradePilot/1.0 signal-bot"}
 CRYPTOPANIC_URL = "https://cryptopanic.com/api/v1/posts/"
 
 # Top 10 by market cap (Binance perpetual pairs)
@@ -154,42 +158,52 @@ def volume_ratio(vol: np.ndarray, period: int = 20) -> float:
 
 def fetch_candles(symbol: str) -> list:
     """
-    Fetch 4-hour OHLCV candles.
-    Tries Binance Futures first; falls back to Bybit on HTTP 451/403
-    (Binance blocks certain cloud/geo IP ranges).
+    Fetch 4-hour OHLCV candles — three-provider fallback chain.
 
-    Both APIs return candles with the same index layout we use:
-      [0] open_time_ms  [2] high  [3] low  [4] close  [5] volume
-    Bybit returns newest-first so we reverse before returning.
+    All three return the same index layout used throughout this script:
+      [0] open_time_ms  [1] open  [2] high  [3] low  [4] close  [5] volume
+    Bybit returns newest-first so its result is reversed before returning.
+
+    Provider chain:
+      1. Binance Futures  (fapi.binance.com) — best data; geo-blocked on some IPs
+      2. Bybit Futures    (api.bybit.com)    — blocked on certain cloud IP ranges
+      3. Binance Spot     (api.binance.com)  — least restricted; prices ≈ futures
     """
-    # ── Binance attempt ───────────────────────────────────────────────────────
+    # 1. Binance Futures
     try:
-        resp = requests.get(
-            BINANCE_KLINES,
+        r = requests.get(
+            BINANCE_FUTURES,
             params={"symbol": symbol, "interval": "4h", "limit": CANDLE_LIMIT},
-            timeout=10,
+            headers=_HEADERS, timeout=10,
         )
-        if resp.status_code not in (451, 403):
-            resp.raise_for_status()
-            return resp.json()
-        print(f"  [WARN] Binance returned {resp.status_code} for {symbol} — falling back to Bybit")
-    except requests.RequestException as e:
-        print(f"  [WARN] Binance error for {symbol} ({e}) — falling back to Bybit")
+        if r.status_code == 200:
+            return r.json()
+        print(f"  [WARN] Binance Futures {r.status_code} for {symbol} — trying Bybit")
+    except Exception as e:
+        print(f"  [WARN] Binance Futures error for {symbol} ({e}) — trying Bybit")
 
-    # ── Bybit fallback ────────────────────────────────────────────────────────
-    resp = requests.get(
-        BYBIT_KLINES,
-        params={
-            "category": "linear",
-            "symbol":   symbol,
-            "interval": "240",         # 240 minutes = 4h
-            "limit":    CANDLE_LIMIT,
-        },
-        timeout=10,
+    # 2. Bybit Futures
+    try:
+        r = requests.get(
+            BYBIT_KLINES,
+            params={"category": "linear", "symbol": symbol,
+                    "interval": "240", "limit": CANDLE_LIMIT},
+            headers=_HEADERS, timeout=10,
+        )
+        if r.status_code == 200:
+            return list(reversed(r.json()["result"]["list"]))
+        print(f"  [WARN] Bybit {r.status_code} for {symbol} — trying Binance Spot")
+    except Exception as e:
+        print(f"  [WARN] Bybit error for {symbol} ({e}) — trying Binance Spot")
+
+    # 3. Binance Spot (final fallback — spot price ≈ futures for major pairs)
+    r = requests.get(
+        BINANCE_SPOT,
+        params={"symbol": symbol, "interval": "4h", "limit": CANDLE_LIMIT},
+        headers=_HEADERS, timeout=10,
     )
-    resp.raise_for_status()
-    candles = resp.json()["result"]["list"]
-    return list(reversed(candles))     # Bybit is newest-first → reverse to oldest-first
+    r.raise_for_status()
+    return r.json()
 
 
 # ── external sentiment ────────────────────────────────────────────────────────
@@ -578,7 +592,7 @@ def handler(event=None, context=None):
             candidates.append(analysis)
 
         except requests.HTTPError as exc:
-            msg = f"{pair}: Binance HTTP {exc.response.status_code}"
+            msg = f"{pair}: API HTTP {exc.response.status_code} (all providers failed)"
             print(f"\n  [ERR] {msg}")
             stats["errors"].append(msg)
         except Exception as exc:
