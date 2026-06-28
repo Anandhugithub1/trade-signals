@@ -687,6 +687,9 @@ def analyze_pair(pair: str, candles: list,
     now         = datetime.now(timezone.utc)
     expires_at  = (now + timedelta(days=expiry_days)).isoformat()
 
+    # Serialise votes for storage and analytics
+    votes_json = [{"name": n, "vote": v, "reason": r} for n, v, r in votes]
+
     return {
         "signal": {
             "id":          str(uuid.uuid4()),
@@ -701,6 +704,7 @@ def analyze_pair(pair: str, candles: list,
             "expires_at":  expires_at,
             "result":      "pending",
             "close_price": None,
+            "votes_json":  votes_json,   # full indicator breakdown → analytics
         },
         "score":       score,
         "price":       price,
