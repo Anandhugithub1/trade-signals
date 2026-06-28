@@ -55,6 +55,31 @@ OKX_KLINES       = "https://www.okx.com/api/v5/market/candles"
 FEAR_GREED_URL   = "https://api.alternative.me/fng/?limit=1"
 GOOGLE_NEWS_RSS  = "https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q={coin}+cryptocurrency"
 COINDESK_RSS     = "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml"
+REUTERS_RSS      = "https://feeds.reuters.com/reuters/businessNews"
+
+# Macro event RSS feeds — Fed, rates, geopolitics
+MACRO_RSS_FEEDS = [
+    "https://news.google.com/rss/search?q=fed+meeting+interest+rate+fomc&hl=en-US&gl=US&ceid=US:en",
+    "https://news.google.com/rss/search?q=war+sanctions+geopolitical+economy+recession&hl=en-US&gl=US&ceid=US:en",
+    "https://feeds.reuters.com/reuters/businessNews",
+]
+
+# Keywords that push crypto HIGHER (risk-on, rate easing, stability)
+_MACRO_BULL = {
+    "rate cut", "dovish", "pivot", "pause hike", "easing", "stimulus",
+    "bailout", "ceasefire", "peace deal", "peace talks", "soft landing",
+    "inflation cooling", "inflation eased", "rate reduction", "fed cut",
+    "interest cut", "quantitative easing", "liquidity", "risk on",
+}
+
+# Keywords that push crypto LOWER (risk-off, rate hikes, instability)
+_MACRO_BEAR = {
+    "rate hike", "hawkish", "tightening", "quantitative tightening",
+    "recession", "default", "war escalation", "invasion", "sanctions",
+    "banking crisis", "credit crunch", "inflation surge", "stagflation",
+    "rate increase", "fed hike", "interest rate rise", "trade war",
+    "tariff", "conflict escalation", "military action", "debt ceiling",
+}
 
 _HEADERS = {"User-Agent": "TradePilot/1.0 signal-bot"}
 
@@ -288,10 +313,51 @@ def get_news_sentiment(coin_sym: str) -> tuple[int, str]:
     return 0, f"News: neutral  ({bull} bull / {bear} bear from {total} headlines)"
 
 
+def get_macro_sentiment() -> tuple[int, str]:
+    """
+    Scans macro RSS feeds for Fed meetings, interest rate decisions,
+    wars, sanctions, and other global events that move crypto markets.
+
+    Runs ONCE per handler invocation (applies to all pairs equally).
+
+    Returns (+1 risk-on / -1 risk-off / 0 neutral, reason_str).
+
+    Bullish signals  (risk-on / easing):
+      rate cut, dovish, pivot, ceasefire, peace deal, soft landing,
+      stimulus, inflation cooling, quantitative easing …
+
+    Bearish signals  (risk-off / tightening):
+      rate hike, hawkish, tightening, recession, war escalation,
+      invasion, sanctions, banking crisis, stagflation, trade war …
+    """
+    titles: list[str] = []
+
+    for url in MACRO_RSS_FEEDS:
+        try:
+            feed = feedparser.parse(url)
+            titles += [e.title for e in feed.entries[:15]]
+        except Exception:
+            pass
+
+    if not titles:
+        return 0, "Macro: no headlines fetched"
+
+    text  = " ".join(titles).lower()
+    bull  = sum(1 for kw in _MACRO_BULL if kw in text)
+    bear  = sum(1 for kw in _MACRO_BEAR if kw in text)
+
+    if bull > bear + 1:
+        return 1,  f"Macro: risk-on  ({bull} bullish keywords: easing/peace/cut detected)"
+    if bear > bull + 1:
+        return -1, f"Macro: risk-off ({bear} bearish keywords: hike/war/recession detected)"
+    return 0, f"Macro: neutral  ({bull} bull / {bear} bear macro keywords)"
+
+
 # ── signal engine ─────────────────────────────────────────────────────────────
 
 def analyze_pair(pair: str, candles: list,
-                 fear_greed_score: int, fear_greed_reason: str) -> dict | None:
+                 fear_greed_score: int, fear_greed_reason: str,
+                 macro_score: int = 0, macro_reason: str = "") -> dict | None:
     """
     Score a pair across all indicators and return a signal dict, or None.
 
@@ -308,6 +374,7 @@ def analyze_pair(pair: str, candles: list,
     Volume spike      > 1.5× avg × trend   (amplifies, not standalone)
     Fear & Greed      extreme fear          extreme greed
     News sentiment    majority positive     majority negative
+    Macro events      rate cut / ceasefire  rate hike / war / recession
     ─────────────────────────────────────────────────────────
     """
     if len(candles) < 210:
@@ -390,6 +457,13 @@ def analyze_pair(pair: str, candles: list,
         votes.append(("News", news_score, news_reason))
     else:
         votes.append(("News", 0, news_reason))
+
+    # 10. Macro events — Fed, interest rates, wars, geopolitics (same for all pairs)
+    if macro_score != 0:
+        score += macro_score
+        votes.append(("Macro", macro_score, macro_reason))
+    else:
+        votes.append(("Macro", 0, macro_reason or "Macro: neutral"))
 
     # ── Decision ─────────────────────────────────────────────────────────────
     base_result = {"score": score, "price": price, "atr": round(calc_atr(high, low, close), 6),
@@ -563,10 +637,13 @@ def handler(event=None, context=None):
 
     print(f"[generate_signals] Will create up to {slots_left} more signal(s) this run.\n")
 
-    # Fetch shared Fear & Greed Index once
+    # Fetch shared sentiment indicators once (apply to all pairs)
     fg_score, fg_raw, fg_reason = get_fear_greed()
     fg_label = fg_reason.split(" — ")[0] if " — " in fg_reason else fg_reason
-    print(f"  Fear & Greed : {fg_reason}\n")
+    print(f"  Fear & Greed : {fg_reason}")
+
+    macro_score, macro_reason = get_macro_sentiment()
+    print(f"  Macro events : {macro_reason}\n")
 
     stats = {
         "analysed": 0, "inserted": 0,
@@ -598,7 +675,7 @@ def handler(event=None, context=None):
             candles = fetch_candles(pair)
 
             stats["analysed"] += 1
-            analysis = analyze_pair(pair, candles, fg_score, fg_reason)
+            analysis = analyze_pair(pair, candles, fg_score, fg_reason, macro_score, macro_reason)
             analysis["pair"] = pair
             all_analyses.append(analysis)
 
