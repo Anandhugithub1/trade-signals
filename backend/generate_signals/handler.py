@@ -137,8 +137,15 @@ MIN_BULL_SCORE       = 4    # net bullish votes required for LONG  (raised: 17 i
 MIN_BEAR_SCORE       = 4    # net bearish votes required for SHORT
 MIN_SIGNAL_CONFIDENCE = 72  # signals below this % are discarded (low conviction)
 MAX_SIGNALS          = 3    # insert at most this many signals per run
-ATR_SL_MULT          = 2.0  # SL = entry ± (ATR_SL_MULT × ATR)
-ATR_TP_MULT          = 3.0  # TP = entry ± (ATR_TP_MULT × ATR)
+ATR_SL_MULT          = 1.2  # SL = entry ± (ATR_SL_MULT × ATR)
+ATR_TP_MULT          = 1.8  # TP = entry ± (ATR_TP_MULT × ATR)
+
+# Hard percentage caps — SL/TP can never exceed these distances from entry,
+# regardless of ATR.  Targets 2–3% intraday moves.
+MAX_SL_PCT  = 0.020   # stop loss  no wider than 2.0% of entry
+MAX_TP_PCT  = 0.030   # take profit no further than 3.0% of entry
+MIN_SL_PCT  = 0.005   # stop loss  at least 0.5% (avoids noise wick-outs)
+MIN_TP_PCT  = 0.010   # take profit at least 1.0%
 CANDLE_LIMIT         = 300  # 300 × 4h ≈ 50 days (enough for EMA200 warmup)
 SEP = "-" * 60
 
@@ -696,14 +703,22 @@ def analyze_pair(pair: str, candles: list,
     confidence = int(60 + min(abs(score) / max_possible, 1.0) * 35)
     confidence = max(60, min(95, confidence))
 
-    # ATR-based SL / TP
+    # ATR-based SL / TP with hard percentage caps
+    # ATR suggests the distance; caps ensure we target 2–3% moves, not 5%+.
     atr_val = base_result["atr"]
+
+    raw_sl_dist = ATR_SL_MULT * atr_val
+    raw_tp_dist = ATR_TP_MULT * atr_val
+
+    sl_dist = max(min(raw_sl_dist, price * MAX_SL_PCT), price * MIN_SL_PCT)
+    tp_dist = max(min(raw_tp_dist, price * MAX_TP_PCT), price * MIN_TP_PCT)
+
     if direction == "long":
-        sl = round(price - ATR_SL_MULT * atr_val, 6)
-        tp = round(price + ATR_TP_MULT * atr_val, 6)
+        sl = round(price - sl_dist, 6)
+        tp = round(price + tp_dist, 6)
     else:
-        sl = round(price + ATR_SL_MULT * atr_val, 6)
-        tp = round(price - ATR_TP_MULT * atr_val, 6)
+        sl = round(price + sl_dist, 6)
+        tp = round(price - tp_dist, 6)
 
     # Risk : Reward ratio  (stored as the reward side of "1 : X")
     risk     = abs(price - sl)
