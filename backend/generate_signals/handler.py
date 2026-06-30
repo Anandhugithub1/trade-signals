@@ -62,6 +62,7 @@ except ImportError:
 # ── config ────────────────────────────────────────────────────────────────────
 SUPABASE_URL         = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+FCM_SERVER_KEY       = os.environ.get("FCM_SERVER_KEY", "")   # Firebase → Project Settings → Cloud Messaging
 
 BINANCE_FUTURES  = "https://fapi.binance.com/fapi/v1/klines"
 BYBIT_KLINES     = "https://api.bybit.com/v5/market/kline"
@@ -790,6 +791,64 @@ def log_analysis(pair: str, analysis: dict) -> None:
         print(f"  {arrow}  {name:<12}  {reason}")
 
 
+# ── push notifications ───────────────────────────────────────────────────────
+
+def _send_push_notifications(supabase, inserted_signals: list) -> None:
+    """
+    Send FCM push notifications to all enabled devices after signals are inserted.
+    Requires FCM_SERVER_KEY env var (Firebase → Project Settings → Cloud Messaging).
+    Silently skips if key is not configured.
+    """
+    if not FCM_SERVER_KEY or not inserted_signals:
+        return
+
+    try:
+        # Fetch all enabled device tokens
+        res = (
+            supabase.table("notification_tokens")
+            .select("device_token")
+            .eq("is_enabled", True)
+            .execute()
+        )
+        tokens = [r["device_token"] for r in (res.data or [])]
+        if not tokens:
+            print("  [FCM]  No enabled devices — skipping push")
+            return
+
+        # Build notification body
+        n      = len(inserted_signals)
+        pairs  = ", ".join(s["pair"] for s in inserted_signals[:3])
+        plural = "s" if n > 1 else ""
+        body   = f"{n} new signal{plural}: {pairs}"
+
+        # Send via FCM Legacy HTTP API
+        resp = requests.post(
+            "https://fcm.googleapis.com/fcm/send",
+            headers={
+                "Authorization": f"key={FCM_SERVER_KEY}",
+                "Content-Type":  "application/json",
+            },
+            json={
+                "registration_ids": tokens[:500],   # FCM max per request
+                "notification": {
+                    "title": "New Trade Signal",
+                    "body":  body,
+                    "sound": "default",
+                },
+                "data": {"type": "new_signal", "count": str(n)},
+                "priority": "high",
+            },
+            timeout=10,
+        )
+        result = resp.json()
+        success = result.get("success", 0)
+        failure = result.get("failure", 0)
+        print(f"  [FCM]  Sent to {len(tokens)} device(s) — {success} ok / {failure} failed")
+
+    except Exception as exc:
+        print(f"  [FCM ERR]  {exc}")
+
+
 # ── market sentiment ─────────────────────────────────────────────────────────
 
 def _upsert_sentiment(supabase, analyses: list, fg_raw: int, fg_label: str) -> None:
@@ -983,7 +1042,12 @@ def handler(event=None, context=None):
             print(f"  [DB ERR] {msg}")
             stats["errors"].append(msg)
 
-    # ── Pass 4: upsert market sentiment ──────────────────────────────────────
+    # ── Pass 4: push notifications ────────────────────────────────────────────
+    inserted_sigs = [a["signal"] for a in to_insert if a["signal"]["pair"] not in
+                     [e.split(" ")[0] for e in stats["errors"]]]
+    _send_push_notifications(supabase, inserted_sigs[:stats["inserted"]])
+
+    # ── Pass 5: upsert market sentiment ──────────────────────────────────────
     try:
         _upsert_sentiment(supabase, all_analyses, fg_raw, fg_label)
     except Exception as exc:

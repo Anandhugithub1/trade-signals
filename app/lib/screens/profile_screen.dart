@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/signal.dart';
 import '../services/supabase_service.dart';
 import '../theme/app_colors.dart';
+import 'notification_settings_screen.dart';
 
 // Derives a display name from an email address.
 // "next.anandhu@gmail.com" → "Next"
@@ -315,7 +316,7 @@ class _MenuCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final items = [
-      (Icons.notifications_outlined,  'Notifications',   'Push alerts for new signals',  c.accent, null as String?),
+      (Icons.notifications_outlined,  'Notifications',   'Push alerts for new signals',  c.accent, 'notifications'),
       (Icons.warning_amber_rounded,   'Risk Disclaimer', 'Read before trading',           const Color(0xFFF59E0B), '/disclaimer/info'),
       (Icons.help_outline_rounded,    'Help & Support',  'FAQs and feedback',             c.long, null),
       (Icons.info_outline_rounded,    'About',           'TradePilot v1.0.0 · MVP',       c.t2, null),
@@ -335,9 +336,12 @@ class _MenuCard extends StatelessWidget {
             children: [
               _MenuRow(
                 icon: icon, label: label, sub: sub, color: color,
-                onTap: route != null
-                    ? () => Navigator.of(context).pushNamed(route)
-                    : null,
+                onTap: route == 'notifications'
+                    ? () => Navigator.push(context, MaterialPageRoute(
+                          builder: (_) => const NotificationSettingsScreen()))
+                    : route != null
+                        ? () => Navigator.of(context).pushNamed(route)
+                        : null,
               ),
               if (!isLast) Divider(height: 1, color: c.border, indent: 58),
             ],
