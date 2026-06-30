@@ -730,8 +730,10 @@ def analyze_pair(pair: str, candles: list,
     now         = datetime.now(timezone.utc)
     expires_at  = (now + timedelta(days=expiry_days)).isoformat()
 
-    # Serialise votes for storage and analytics
-    votes_json = [{"name": n, "vote": v, "reason": r} for n, v, r in votes]
+    # Compact votes dict — only non-zero votes, no reason strings.
+    # Drops storage from ~1KB to ~120 bytes per signal.
+    # Format: {"MACD hist": 1, "EMA200": 1, "Macro": -1, ...}
+    votes_json = {n: v for n, v, _ in votes if v != 0}
 
     return {
         "signal": {
