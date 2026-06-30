@@ -52,6 +52,8 @@ import feedparser
 import numpy as np
 from datetime import datetime, timezone, timedelta
 from supabase import create_client, Client
+from google.oauth2 import service_account
+import google.auth.transport.requests
 
 try:
     from dotenv import load_dotenv
@@ -62,7 +64,9 @@ except ImportError:
 # ── config ────────────────────────────────────────────────────────────────────
 SUPABASE_URL         = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-FCM_SERVER_KEY       = os.environ.get("FCM_SERVER_KEY", "")   # Firebase → Project Settings → Cloud Messaging
+# Firebase service account JSON (entire file content as a string).
+# Firebase Console → Project Settings → Service Accounts → Generate new private key
+FIREBASE_SA_JSON     = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
 
 BINANCE_FUTURES  = "https://fapi.binance.com/fapi/v1/klines"
 BYBIT_KLINES     = "https://api.bybit.com/v5/market/kline"
@@ -793,17 +797,40 @@ def log_analysis(pair: str, analysis: dict) -> None:
 
 # ── push notifications ───────────────────────────────────────────────────────
 
+def _get_fcm_access_token() -> tuple[str, str]:
+    """
+    Returns (Bearer token, project_id) using the Firebase service account JSON.
+    The JSON is stored as a string in FIREBASE_SERVICE_ACCOUNT_JSON env var.
+    """
+    sa_info   = json.loads(FIREBASE_SA_JSON)
+    project   = sa_info["project_id"]
+    creds     = service_account.Credentials.from_service_account_info(
+        sa_info,
+        scopes=["https://www.googleapis.com/auth/firebase.messaging"],
+    )
+    creds.refresh(google.auth.transport.requests.Request())
+    return creds.token, project
+
+
 def _send_push_notifications(supabase, inserted_signals: list) -> None:
     """
-    Send FCM push notifications to all enabled devices after signals are inserted.
-    Requires FCM_SERVER_KEY env var (Firebase → Project Settings → Cloud Messaging).
-    Silently skips if key is not configured.
+    Send FCM V1 push notifications to all enabled devices.
+
+    Uses the FCM HTTP v1 API (the modern API — legacy was deprecated June 2024).
+    Requires FIREBASE_SERVICE_ACCOUNT_JSON env var containing the full
+    service account JSON downloaded from:
+      Firebase Console → Project Settings → Service Accounts → Generate new private key
+
+    Sends one request per device token (V1 API requirement — no batch endpoint).
+    Silently skips if env var is not configured.
     """
-    if not FCM_SERVER_KEY or not inserted_signals:
+    if not FIREBASE_SA_JSON or not inserted_signals:
+        if not FIREBASE_SA_JSON:
+            print("  [FCM]  FIREBASE_SERVICE_ACCOUNT_JSON not set — skipping push")
         return
 
     try:
-        # Fetch all enabled device tokens
+        # Fetch all enabled device tokens from Supabase
         res = (
             supabase.table("notification_tokens")
             .select("device_token")
@@ -815,35 +842,39 @@ def _send_push_notifications(supabase, inserted_signals: list) -> None:
             print("  [FCM]  No enabled devices — skipping push")
             return
 
-        # Build notification body
+        # Get short-lived OAuth2 access token
+        bearer, project_id = _get_fcm_access_token()
+        url     = f"https://fcm.googleapis.com/v1/projects/{project_id}/messages:send"
+        headers = {"Authorization": f"Bearer {bearer}", "Content-Type": "application/json"}
+
+        # Build notification content
         n      = len(inserted_signals)
         pairs  = ", ".join(s["pair"] for s in inserted_signals[:3])
         plural = "s" if n > 1 else ""
+        title  = "New Trade Signal" + ("s" if n > 1 else "")
         body   = f"{n} new signal{plural}: {pairs}"
 
-        # Send via FCM Legacy HTTP API
-        resp = requests.post(
-            "https://fcm.googleapis.com/fcm/send",
-            headers={
-                "Authorization": f"key={FCM_SERVER_KEY}",
-                "Content-Type":  "application/json",
-            },
-            json={
-                "registration_ids": tokens[:500],   # FCM max per request
-                "notification": {
-                    "title": "New Trade Signal",
-                    "body":  body,
-                    "sound": "default",
-                },
-                "data": {"type": "new_signal", "count": str(n)},
-                "priority": "high",
-            },
-            timeout=10,
-        )
-        result = resp.json()
-        success = result.get("success", 0)
-        failure = result.get("failure", 0)
-        print(f"  [FCM]  Sent to {len(tokens)} device(s) — {success} ok / {failure} failed")
+        # V1 API: one request per token
+        ok = fail = 0
+        for token in tokens:
+            try:
+                resp = requests.post(url, headers=headers, json={
+                    "message": {
+                        "token": token,
+                        "notification": {"title": title, "body": body},
+                        "data": {"type": "new_signal", "count": str(n)},
+                        "android": {"priority": "high"},
+                        "apns": {"payload": {"aps": {"sound": "default", "badge": n}}},
+                    }
+                }, timeout=8)
+                if resp.status_code == 200:
+                    ok += 1
+                else:
+                    fail += 1
+            except Exception:
+                fail += 1
+
+        print(f"  [FCM]  Sent to {len(tokens)} device(s) — {ok} ok / {fail} failed")
 
     except Exception as exc:
         print(f"  [FCM ERR]  {exc}")
