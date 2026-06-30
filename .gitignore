@@ -1,3 +1,7 @@
+# ── Firebase service account (contains private key — never commit) ────────────
+**/firebase-service-account.json
+**/firebase-adminsdk*.json
+
 # ── Environment files ─────────────────────────────────────────────────────────
 .env
 .env.local

@@ -64,9 +64,18 @@ except ImportError:
 # ── config ────────────────────────────────────────────────────────────────────
 SUPABASE_URL         = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-# Firebase service account JSON (entire file content as a string).
-# Firebase Console → Project Settings → Service Accounts → Generate new private key
-FIREBASE_SA_JSON     = os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+
+# Firebase service account — two ways to supply credentials:
+#   Local dev  : FIREBASE_SERVICE_ACCOUNT_PATH=./firebase-service-account.json
+#   GitHub CI  : FIREBASE_SERVICE_ACCOUNT_JSON=<entire JSON as one-line secret>
+def _load_firebase_sa() -> str:
+    path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_PATH", "")
+    if path and os.path.isfile(path):
+        with open(path) as f:
+            return f.read()
+    return os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+
+FIREBASE_SA_JSON = _load_firebase_sa()
 
 BINANCE_FUTURES  = "https://fapi.binance.com/fapi/v1/klines"
 BYBIT_KLINES     = "https://api.bybit.com/v5/market/kline"
