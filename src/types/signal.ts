@@ -1,12 +1,6 @@
 export type SignalDirection = 'long' | 'short'
 export type SignalResult = 'pending' | 'win' | 'loss' | 'expired'
 
-export interface SignalVote {
-  name: string   // indicator name e.g. "RSI"
-  vote: number   // +1 / -1 / 0
-  reason: string // human-readable reason
-}
-
 export interface TradeSignal {
   id: string
   pair: string
@@ -16,9 +10,10 @@ export interface TradeSignal {
   take_profit: number
   confidence: number
   rr_ratio?: number | null
+  latest_price?: number | null
   timestamp: string
   expires_at?: string | null
   result: SignalResult
   close_price: number | null
-  votes_json?: SignalVote[] | null
+  votes_json?: Record<string, number> | null  // compact: {"MACD hist":1,"EMA200":1,"Macro":-1}
 }
