@@ -77,7 +77,7 @@ class PushNotificationService {
   static Future<void> _saveToken(String token) async {
     final platform = kIsWeb ? 'web' : (Platform.isIOS ? 'ios' : 'android');
     try {
-      final res = await _db.from('notification_tokens').upsert(
+      await _db.from('notification_tokens').upsert(
         {'device_token': token, 'platform': platform, 'is_enabled': true},
         onConflict: 'device_token',
       );

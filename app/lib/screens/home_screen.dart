@@ -633,7 +633,7 @@ class _FeaturedCard extends StatelessWidget {
                       letterSpacing: -0.5,
                     ),
                   ),
-                  Text('confidence', style: TextStyle(color: c.t3, fontSize: 11)),
+                  Text('strength', style: TextStyle(color: c.t3, fontSize: 11)),
                 ],
               ),
             ],

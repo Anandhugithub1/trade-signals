@@ -13,34 +13,33 @@ by market cap + Gold (XAUUSDT) and Silver (XAGUSDT) commodity perpetuals.
   Macro events   Google News RSS + Reuters  (Fed / rates / wars)
 
 ═══════════════════════════════════════════════════════════════════
- VOTING TABLE  (each indicator casts +1 / -1 / 0)
+ STRATEGY  —  regime-filtered momentum (1h timeframe, ~3–4% swings)
 ═══════════════════════════════════════════════════════════════════
-  #   Indicator            Bullish (+1)           Bearish (-1)
-  ─── ──────────────────   ─────────────────────  ────────────────────
-  1   RSI(14)              < 35 oversold           > 65 overbought
-  2   Stochastic RSI       < 0.20 oversold         > 0.80 overbought
-  3   Williams %R          < -80 oversold          > -20 overbought
-  4   MACD histogram       positive momentum       negative momentum
-  5   MACD crossover       histogram flipped +     histogram flipped −  [bonus]
-  6   EMA 200              price above             price below
-  7   EMA 50               price above             price below
-  8   EMA 20/50 cross      EMA20 > EMA50           EMA20 < EMA50
-  9   Bollinger %B         < 0.20 low band         > 0.80 high band
-  10  OBV slope            trending up             trending down
-  11  Volume spike         > 1.5× avg trend        (amplifies dominant bias)
-  12  Fear & Greed         extreme fear            extreme greed
-  13  Global mkt cap       24h change > +3 %       24h change < -3 %
-  14  Funding rate         negative (shorts pay)   positive (longs pay)
-  15  Long/Short ratio     LSR < 0.8  (over-shorted)  LSR > 1.5 (over-longed)
-  16  Coin news            bullish headlines        bearish headlines
-  17  Macro events         rate cut/ceasefire       rate hike/war/recession
-  ─── ──────────────────   ─────────────────────  ────────────────────
+  STEP 1 — REGIME GATE (the core of the system)
+     • ADX(14) must be >= 20  → confirms a real trend exists
+     • EMA stack must align    → price > EMA50 > EMA200 (up) or the inverse (down)
+     • If neither holds → NO SIGNAL. Momentum never trades ranging markets.
 
-  LONG  signal when net score >= MIN_BULL_SCORE  (4)
-  SHORT signal when net score <= -MIN_BEAR_SCORE (4)
-  Confidence = score ratio → 60–95 %
+  STEP 2 — VOTE (all votes only ever point WITH the confirmed trend)
+     Trend engine  : EMA200, EMA50, EMA20/50 cross
+     Momentum      : MACD (single vote; crossover just strengthens the reason)
+     Volume        : OBV slope, Volume-spike amplifier
+     Pullback edge : Oscillators + Bollinger — regime-aware, so an oversold
+                     reading in an uptrend is a BUY (never a counter-trend short)
+     Positioning   : Funding rate, Long/Short ratio (contrarian)
+     Market context: F&G + market-cap + news + macro collapsed into ONE
+                     low-weight vote (needs strong net agreement to fire)
 
-Trigger: every 4h via GitHub Actions cron. Max 5 signals/day.
+  STEP 3 — DECISION
+     LONG  when net score >= +4  AND uptrend
+     SHORT when net score <= -4  AND downtrend
+     Signal strength = |score| / active votes → 60–95 %
+
+  STEP 4 — RISK
+     TP = fixed 3.5% target (matches 1h momentum swing)
+     SL = min(2× ATR, 2.3% cap), then tightened so reward:risk is never < 1:1.5
+
+Trigger: every 4h via GitHub Actions cron. Max 4 signals/day.
 """
 
 import json
@@ -153,20 +152,21 @@ TOP_PAIRS = [
     "XAGUSDT",  # Silver (XAG/USDT perpetual)
 ]
 
-MIN_BULL_SCORE       = 4    # net bullish votes required for LONG  (raised: 17 indicators now)
-MIN_BEAR_SCORE       = 4    # net bearish votes required for SHORT
-MIN_SIGNAL_CONFIDENCE = 72  # signals below this % are discarded (low conviction)
-MAX_SIGNALS          = 4    # insert at most this many signals per day
-ATR_SL_MULT          = 1.2  # SL = entry ± (ATR_SL_MULT × ATR)
-ATR_TP_MULT          = 1.8  # TP = entry ± (ATR_TP_MULT × ATR)
+MIN_BULL_SCORE        = 4    # net bullish votes required for LONG
+MIN_BEAR_SCORE        = 4    # net bearish votes required for SHORT
+MIN_SIGNAL_STRENGTH   = 72   # signals below this strength % are discarded
+MAX_SIGNALS           = 4    # insert at most this many signals per day
 
-# Hard percentage caps — SL/TP can never exceed these distances from entry,
-# regardless of ATR.  Targets 2–3% intraday moves.
-MAX_SL_PCT  = 0.020   # stop loss  no wider than 2.0% of entry
-MAX_TP_PCT  = 0.030   # take profit no further than 3.0% of entry
-MIN_SL_PCT  = 0.005   # stop loss  at least 0.5% (avoids noise wick-outs)
-MIN_TP_PCT  = 0.010   # take profit at least 1.0%
-CANDLE_LIMIT         = 300  # 300 × 4h ≈ 50 days (enough for EMA200 warmup)
+# ── Regime filter (momentum needs a trend) ────────────────────────────────────
+ADX_TREND_MIN = 20   # ADX below this = ranging/choppy → skip (no momentum edge)
+
+# ── Momentum targets (1h timeframe, ~3–4% swing moves) ────────────────────────
+TARGET_TP_PCT = 0.035  # fixed 3.5% take-profit target
+ATR_SL_MULT   = 2.0    # SL = 2× ATR (gives a 1h trade room to breathe)
+MAX_SL_PCT    = 0.023  # hard SL cap → keeps reward:risk at/above the floor
+MIN_RR        = 1.5    # never generate a signal below 1 : 1.5 reward:risk
+
+CANDLE_LIMIT  = 300    # 300 × 1h ≈ 12.5 days (EMA200 well-converged)
 SEP = "-" * 60
 
 
@@ -230,6 +230,45 @@ def calc_atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int =
                    np.abs(low[1:] - close[:-1]))
     )
     return float(np.mean(tr[-period:]))
+
+
+def calc_adx(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> float:
+    """
+    Average Directional Index (0–100) — measures TREND STRENGTH (not direction).
+      ADX >= 25  strong trend  (momentum strategies work here)
+      ADX <  20  ranging/choppy (momentum whipsaws — sit out)
+    Uses Wilder's smoothing, the standard implementation.
+    """
+    high  = high.astype(float)
+    low   = low.astype(float)
+    close = close.astype(float)
+
+    tr = np.maximum(high[1:] - low[1:],
+                    np.maximum(np.abs(high[1:] - close[:-1]),
+                               np.abs(low[1:] - close[:-1])))
+    up   = high[1:] - high[:-1]
+    down = low[:-1] - low[1:]
+    plus_dm  = np.where((up > down) & (up > 0), up, 0.0)
+    minus_dm = np.where((down > up) & (down > 0), down, 0.0)
+
+    def _wilder(x: np.ndarray, n: int) -> np.ndarray:
+        out = np.zeros(len(x))
+        if len(x) < n:
+            return out
+        out[n - 1] = x[:n].sum()
+        for i in range(n, len(x)):
+            out[i] = out[i - 1] - out[i - 1] / n + x[i]
+        return out
+
+    tr_s  = _wilder(tr, period)
+    pdm_s = _wilder(plus_dm, period)
+    mdm_s = _wilder(minus_dm, period)
+
+    plus_di  = 100 * np.divide(pdm_s, tr_s, out=np.zeros_like(tr_s), where=tr_s != 0)
+    minus_di = 100 * np.divide(mdm_s, tr_s, out=np.zeros_like(tr_s), where=tr_s != 0)
+    di_sum   = plus_di + minus_di
+    dx       = 100 * np.abs(plus_di - minus_di) / np.where(di_sum == 0, 1, di_sum)
+    return float(np.mean(dx[-period:]))
 
 
 def calc_stoch_rsi(close: np.ndarray, rsi_period: int = 14, stoch_period: int = 14) -> float:
@@ -326,7 +365,7 @@ def fetch_candles(symbol: str) -> list:
     try:
         r = requests.get(
             BINANCE_FUTURES,
-            params={"symbol": symbol, "interval": "4h", "limit": CANDLE_LIMIT},
+            params={"symbol": symbol, "interval": "1h", "limit": CANDLE_LIMIT},
             headers=_HEADERS, timeout=10,
         )
         if r.status_code == 200:
@@ -340,7 +379,7 @@ def fetch_candles(symbol: str) -> list:
         r = requests.get(
             BYBIT_KLINES,
             params={"category": "linear", "symbol": symbol,
-                    "interval": "240", "limit": CANDLE_LIMIT},
+                    "interval": "60", "limit": CANDLE_LIMIT},
             headers=_HEADERS, timeout=10,
         )
         if r.status_code == 200:
@@ -352,7 +391,7 @@ def fetch_candles(symbol: str) -> list:
     # 3. OKX (US-accessible, identical index format, no geo-block)
     r = requests.get(
         OKX_KLINES,
-        params={"instId": _okx_symbol(symbol), "bar": "4H", "limit": CANDLE_LIMIT},
+        params={"instId": _okx_symbol(symbol), "bar": "1H", "limit": CANDLE_LIMIT},
         headers=_HEADERS, timeout=10,
     )
     r.raise_for_status()
@@ -579,170 +618,152 @@ def analyze_pair(pair: str, candles: list,
     vol    = np.array([float(c[5]) for c in candles])
     price  = close[-1]
 
-    score       = 0
-    votes       = []   # (indicator, vote, reason_str)
+    score        = 0
+    votes        = []   # (indicator, vote, reason_str)
     is_commodity = pair in ("XAUUSDT", "XAGUSDT")
+    atr_val      = round(calc_atr(high, low, close), 6)
 
-    # ── 1. Oscillator consensus (RSI + StochRSI + Williams %R) ───────────────
-    # These three all measure overbought/oversold. They are highly correlated —
-    # counting each separately would triple-count one concept.
-    # Fix: take the majority vote across all three → cast a single ±1.
-    rsi_val  = calc_rsi(close)
-    srsi     = calc_stoch_rsi(close)
-    wr       = calc_williams_r(high, low, close)
+    def no_signal(reason: str) -> dict:
+        return {"score": score, "price": price, "atr": atr_val, "adx": round(adx, 1),
+                "votes": votes + [("Regime", 0, reason)], "has_signal": False}
 
-    osc_bull = sum([rsi_val < 35, srsi < 0.20, wr < -80])
-    osc_bear = sum([rsi_val > 65, srsi > 0.80, wr > -20])
-    osc_details = f"RSI {rsi_val:.1f}  StochRSI {srsi:.2f}  W%R {wr:.1f}"
-
-    if osc_bull >= 2:
-        score += 1; votes.append(("Oscillators", +1, f"oversold consensus ({osc_bull}/3)  {osc_details}"))
-    elif osc_bear >= 2:
-        score -= 1; votes.append(("Oscillators", -1, f"overbought consensus ({osc_bear}/3)  {osc_details}"))
-    else:
-        votes.append(("Oscillators", 0, f"no consensus  {osc_details}"))
-
-    # ── 2. MACD histogram direction ───────────────────────────────────────────
-    _, _, hist_now, hist_prev = calc_macd(close)
-    if hist_now > 0:
-        score += 1; votes.append(("MACD hist",  +1, f"histogram {hist_now:+.4f} (bullish momentum)"))
-    elif hist_now < 0:
-        score -= 1; votes.append(("MACD hist",  -1, f"histogram {hist_now:+.4f} (bearish momentum)"))
-
-    # ── 3. MACD crossover bonus ───────────────────────────────────────────────
-    if hist_prev < 0 < hist_now:
-        score += 1; votes.append(("MACD cross", +1, "bullish crossover (hist flipped +)"))
-    elif hist_prev > 0 > hist_now:
-        score -= 1; votes.append(("MACD cross", -1, "bearish crossover (hist flipped -)"))
-
-    # ── 4. EMA 200 — macro trend ──────────────────────────────────────────────
+    # ── REGIME GATE — momentum only trades confirmed trends (ADX + EMA stack) ──
+    # This is the core fix: instead of summing trend-following and mean-reversion
+    # votes that fight each other, we first decide the regime, then only trade
+    # WITH a confirmed trend. Ranging markets are skipped entirely.
+    adx    = calc_adx(high, low, close)
+    ema20  = calc_ema(close, 20)
+    ema50  = calc_ema(close, 50)
     ema200 = calc_ema(close, 200)
+    uptrend   = price > ema50 > ema200
+    downtrend = price < ema50 < ema200
+
+    if adx < ADX_TREND_MIN:
+        return no_signal(f"ADX {adx:.1f} < {ADX_TREND_MIN} — ranging, momentum sits out")
+    if not (uptrend or downtrend):
+        return no_signal(f"ADX {adx:.1f} trending but EMAs not stacked — no clean direction")
+
+    votes.append(("Regime", 0, f"ADX {adx:.1f} — {'UP' if uptrend else 'DOWN'}trend confirmed"))
+
+    # ── Trend backbone (the momentum engine) ──────────────────────────────────
     if price > ema200:
-        score += 1; votes.append(("EMA200", +1, f"price {price:,.4f} > EMA200 {ema200:,.4f}"))
+        score += 1; votes.append(("EMA200", +1, f"price > EMA200 {ema200:,.4f} (macro trend up)"))
     else:
-        score -= 1; votes.append(("EMA200", -1, f"price {price:,.4f} < EMA200 {ema200:,.4f}"))
+        score -= 1; votes.append(("EMA200", -1, f"price < EMA200 {ema200:,.4f} (macro trend down)"))
 
-    # ── 5. EMA 50 — intermediate trend ───────────────────────────────────────
-    ema50 = calc_ema(close, 50)
     if price > ema50:
-        score += 1; votes.append(("EMA50",  +1, f"price > EMA50 {ema50:,.4f}"))
+        score += 1; votes.append(("EMA50", +1, f"price > EMA50 {ema50:,.4f}"))
     else:
-        score -= 1; votes.append(("EMA50",  -1, f"price < EMA50 {ema50:,.4f}"))
+        score -= 1; votes.append(("EMA50", -1, f"price < EMA50 {ema50:,.4f}"))
 
-    # ── 6. EMA 20/50 short-term crossover ────────────────────────────────────
-    ema20 = calc_ema(close, 20)
     if ema20 > ema50:
-        score += 1; votes.append(("EMA20/50", +1, f"EMA20 {ema20:,.4f} > EMA50 — bullish cross"))
+        score += 1; votes.append(("EMA20/50", +1, "EMA20 > EMA50 (short-term up)"))
     else:
-        score -= 1; votes.append(("EMA20/50", -1, f"EMA20 {ema20:,.4f} < EMA50 — bearish cross"))
+        score -= 1; votes.append(("EMA20/50", -1, "EMA20 < EMA50 (short-term down)"))
 
-    # ── 7. Bollinger Bands ────────────────────────────────────────────────────
-    _, _, _, pct_b = calc_bollinger(close)
-    if pct_b < 0.20:
-        score += 1; votes.append(("BB",  +1, f"%B={pct_b:.2f} — near lower band (reversal up)"))
-    elif pct_b > 0.80:
-        score -= 1; votes.append(("BB",  -1, f"%B={pct_b:.2f} — near upper band (reversal down)"))
-    else:
-        votes.append(("BB",   0, f"%B={pct_b:.2f} — mid-band"))
+    # ── MACD — single vote (crossover strengthens the reason, never double-counts) ──
+    _, _, hist_now, hist_prev = calc_macd(close)
+    crossed_up   = hist_prev < 0 < hist_now
+    crossed_down = hist_prev > 0 > hist_now
+    if hist_now > 0:
+        score += 1
+        votes.append(("MACD", +1, f"histogram {hist_now:+.4f} ({'bullish + fresh cross' if crossed_up else 'bullish momentum'})"))
+    elif hist_now < 0:
+        score -= 1
+        votes.append(("MACD", -1, f"histogram {hist_now:+.4f} ({'bearish + fresh cross' if crossed_down else 'bearish momentum'})"))
 
-    # ── 8. OBV slope — volume confirms price trend ────────────────────────────
+    # ── OBV slope — volume confirms the trend ─────────────────────────────────
     obv_slope = calc_obv_slope(close, vol)
     if obv_slope > 0:
-        score += 1; votes.append(("OBV", +1, f"OBV slope {obv_slope:+.0f} — volume trending up"))
+        score += 1; votes.append(("OBV", +1, "volume trending up (confirms)"))
     elif obv_slope < 0:
-        score -= 1; votes.append(("OBV", -1, f"OBV slope {obv_slope:+.0f} — volume trending down"))
+        score -= 1; votes.append(("OBV", -1, "volume trending down (confirms)"))
     else:
-        votes.append(("OBV", 0, "OBV slope flat"))
+        votes.append(("OBV", 0, "OBV flat"))
 
-    # ── 9. Fear & Greed (crypto-specific — skip for commodities) ─────────────
-    # F&G measures crypto market sentiment only. Gold/Silver are safe-haven
-    # assets with different sentiment drivers — applying F&G to them is wrong.
-    if not is_commodity:
-        if fear_greed_score != 0:
-            score += fear_greed_score
-            votes.append(("Fear/Greed", fear_greed_score, fear_greed_reason))
-        else:
-            votes.append(("Fear/Greed", 0, fear_greed_reason))
+    # ── Oscillators — REGIME-AWARE, only ever vote WITH the trend ─────────────
+    # An oversold reading inside an uptrend = healthy pullback = bonus long entry.
+    # An overbought reading inside an uptrend is NORMAL momentum → neutral (we do
+    # NOT short a strong uptrend). This is the fix for "buying tops via contradiction".
+    rsi_val = calc_rsi(close)
+    srsi    = calc_stoch_rsi(close)
+    wr_val  = calc_williams_r(high, low, close)
+    osc_oversold   = sum([rsi_val < 40, srsi < 0.25, wr_val < -75]) >= 2
+    osc_overbought = sum([rsi_val > 60, srsi > 0.75, wr_val > -25]) >= 2
+    osc_det = f"RSI {rsi_val:.0f} StochRSI {srsi:.2f} W%R {wr_val:.0f}"
+    if uptrend and osc_oversold:
+        score += 1; votes.append(("Oscillators", +1, f"oversold pullback in uptrend — {osc_det}"))
+    elif downtrend and osc_overbought:
+        score -= 1; votes.append(("Oscillators", -1, f"overbought bounce in downtrend — {osc_det}"))
     else:
-        votes.append(("Fear/Greed", 0, "Fear/Greed: skipped for commodity pair"))
+        votes.append(("Oscillators", 0, f"no pullback edge — {osc_det}"))
 
-    # ── 10. Global market cap change (crypto-specific — skip for commodities) ─
-    # Crypto market cap is irrelevant to gold/silver prices.
-    if not is_commodity:
-        if market_cap_score != 0:
-            score += market_cap_score
-            votes.append(("Mkt Cap", market_cap_score, market_cap_reason))
-        else:
-            votes.append(("Mkt Cap", 0, market_cap_reason or "Mkt cap: neutral"))
+    # ── Bollinger — REGIME-AWARE pullback confirmation ────────────────────────
+    _, _, _, pct_b = calc_bollinger(close)
+    if uptrend and pct_b < 0.40:
+        score += 1; votes.append(("Bollinger", +1, f"%B {pct_b:.2f} — dip within uptrend"))
+    elif downtrend and pct_b > 0.60:
+        score -= 1; votes.append(("Bollinger", -1, f"%B {pct_b:.2f} — bounce within downtrend"))
     else:
-        votes.append(("Mkt Cap", 0, "Mkt cap: skipped for commodity pair"))
+        votes.append(("Bollinger", 0, f"%B {pct_b:.2f} — no pullback"))
 
-    # ── 11. Funding rate — derivatives positioning ────────────────────────────
+    # ── Derivatives (contrarian positioning) ──────────────────────────────────
     if funding_score != 0:
-        score += funding_score
-        votes.append(("Funding", funding_score, funding_reason))
+        score += funding_score; votes.append(("Funding", funding_score, funding_reason))
     else:
-        votes.append(("Funding", 0, funding_reason or "Funding rate: neutral"))
-
-    # ── 12. Long/Short ratio — derivatives positioning ────────────────────────
+        votes.append(("Funding", 0, funding_reason or "Funding: neutral"))
     if lsr_score != 0:
-        score += lsr_score
-        votes.append(("L/S Ratio", lsr_score, lsr_reason))
+        score += lsr_score; votes.append(("L/S Ratio", lsr_score, lsr_reason))
     else:
-        votes.append(("L/S Ratio", 0, lsr_reason or "L/S ratio: balanced"))
+        votes.append(("L/S Ratio", 0, lsr_reason or "L/S: balanced"))
 
-    # ── 13. Coin-specific news ────────────────────────────────────────────────
+    # ── Market Context — ALL soft sentiment collapsed into ONE low-weight vote ─
+    # F&G, market cap, news and macro are individually noisy. We require strong
+    # net agreement (|sum| >= 2) before they nudge the score by a single point,
+    # so a Google-News keyword can never flip a technical setup on its own.
     coin_sym = pair.replace("USDT", "")
     news_score, news_reason = get_news_sentiment(coin_sym)
-    if news_score != 0:
-        score += news_score
-        votes.append(("News", news_score, news_reason))
+    ctx_sum = macro_score + news_score
+    if not is_commodity:
+        ctx_sum += fear_greed_score + market_cap_score
+    if ctx_sum >= 2:
+        score += 1; votes.append(("Market Context", +1, f"net sentiment +{ctx_sum} (F&G/news/macro agree bullish)"))
+    elif ctx_sum <= -2:
+        score -= 1; votes.append(("Market Context", -1, f"net sentiment {ctx_sum} (F&G/news/macro agree bearish)"))
     else:
-        votes.append(("News", 0, news_reason))
+        votes.append(("Market Context", 0, f"net sentiment {ctx_sum:+d} — mixed/neutral"))
 
-    # ── 14. Macro events — Fed, rates, wars, geopolitics ─────────────────────
-    # Macro is valid for ALL pairs (crypto + gold/silver respond to rate decisions)
-    if macro_score != 0:
-        score += macro_score
-        votes.append(("Macro", macro_score, macro_reason))
-    else:
-        votes.append(("Macro", 0, macro_reason or "Macro: neutral"))
-
-    # ── 15. Volume spike — amplifies FINAL dominant trend (must be last) ──────
-    # Placed after all other votes so it amplifies the true net direction,
-    # not a partial mid-calculation score.
+    # ── Volume spike — amplifies the FINAL net direction ──────────────────────
     vol_r = volume_ratio(vol)
-    if vol_r >= 1.5:
-        amp = 1 if score > 0 else (-1 if score < 0 else 0)
+    if vol_r >= 1.5 and score != 0:
+        amp = 1 if score > 0 else -1
         score += amp
-        votes.append(("Volume", amp,
-                      f"volume {vol_r:.2f}× avg — amplifies {'bullish' if amp > 0 else 'bearish' if amp < 0 else 'neutral'} bias"))
+        votes.append(("Volume", amp, f"volume {vol_r:.2f}× avg — amplifies {'bullish' if amp > 0 else 'bearish'}"))
+    else:
+        votes.append(("Volume", 0, f"volume {vol_r:.2f}× avg"))
 
     # ── Decision ─────────────────────────────────────────────────────────────
-    base_result = {"score": score, "price": price, "atr": round(calc_atr(high, low, close), 6),
-                   "votes": votes, "has_signal": False}
+    base_result = {"score": score, "price": price, "atr": atr_val,
+                   "adx": round(adx, 1), "votes": votes, "has_signal": False}
 
-    if score >= MIN_BULL_SCORE:
+    if score >= MIN_BULL_SCORE and uptrend:
         direction = "long"
-    elif score <= -MIN_BEAR_SCORE:
+    elif score <= -MIN_BEAR_SCORE and downtrend:
         direction = "short"
     else:
-        return base_result   # return score info even when no signal
+        return base_result   # score too weak, or would be counter-trend
 
-    # Confidence: map |score| / max_possible → 60-95%
-    max_possible = len([v for v in votes if v[1] != 0]) or 1
-    confidence = int(60 + min(abs(score) / max_possible, 1.0) * 35)
-    confidence = max(60, min(95, confidence))
+    # ── Signal strength: |score| / active votes → 60–95 ──────────────────────
+    active   = len([v for v in votes if v[1] != 0]) or 1
+    strength = max(60, min(95, int(60 + min(abs(score) / active, 1.0) * 35)))
 
-    # ATR-based SL / TP with hard percentage caps
-    # ATR suggests the distance; caps ensure we target 2–3% moves, not 5%+.
-    atr_val = base_result["atr"]
-
-    raw_sl_dist = ATR_SL_MULT * atr_val
-    raw_tp_dist = ATR_TP_MULT * atr_val
-
-    sl_dist = max(min(raw_sl_dist, price * MAX_SL_PCT), price * MIN_SL_PCT)
-    tp_dist = max(min(raw_tp_dist, price * MAX_TP_PCT), price * MIN_TP_PCT)
+    # ── SL / TP for 1h momentum (fixed 3.5% target, RR floor enforced) ────────
+    tp_dist = price * TARGET_TP_PCT
+    sl_dist = min(ATR_SL_MULT * atr_val, price * MAX_SL_PCT)
+    if sl_dist <= 0:
+        sl_dist = price * 0.01
+    if tp_dist / sl_dist < MIN_RR:        # tighten SL until reward:risk >= 1.5
+        sl_dist = tp_dist / MIN_RR
 
     if direction == "long":
         sl = round(price - sl_dist, 6)
@@ -756,14 +777,12 @@ def analyze_pair(pair: str, candles: list,
     reward   = abs(tp - price)
     rr_ratio = round(reward / risk, 2) if risk > 0 else 0.0
 
-    # Expiry window: 2–7 days based on confidence + RR quality
-    expiry_days = calc_expiry_days(confidence, rr_ratio)
+    # Expiry window: 2–7 days based on signal strength + RR quality
+    expiry_days = calc_expiry_days(strength, rr_ratio)
     now         = datetime.now(timezone.utc)
     expires_at  = (now + timedelta(days=expiry_days)).isoformat()
 
-    # Compact votes dict — only non-zero votes, no reason strings.
-    # Drops storage from ~1KB to ~120 bytes per signal.
-    # Format: {"MACD hist": 1, "EMA200": 1, "Macro": -1, ...}
+    # Compact votes dict — only non-zero votes, no reason strings (~120 bytes).
     votes_json = {n: v for n, v, _ in votes if v != 0}
 
     return {
@@ -774,17 +793,18 @@ def analyze_pair(pair: str, candles: list,
             "entry":       round(float(price), 6),
             "stop_loss":   sl,
             "take_profit": tp,
-            "confidence":  confidence,
+            "confidence":  strength,     # DB column kept as 'confidence'; value = signal strength
             "rr_ratio":    rr_ratio,
             "timestamp":   now.isoformat(),
             "expires_at":  expires_at,
             "result":      "pending",
             "close_price": None,
-            "votes_json":  votes_json,   # full indicator breakdown → analytics
+            "votes_json":  votes_json,
         },
         "score":       score,
         "price":       price,
         "atr":         round(atr_val, 6),
+        "adx":         round(adx, 1),
         "rr_ratio":    rr_ratio,
         "expiry_days": expiry_days,
         "votes":       votes,
@@ -810,8 +830,9 @@ def log_analysis(pair: str, analysis: dict) -> None:
     s       = analysis["signal"]
     rr      = analysis.get("rr_ratio", 0)
     exp_d   = analysis.get("expiry_days", "?")
+    adx     = analysis.get("adx", 0)
     rr_label = "Excellent" if rr >= 2.0 else "Good" if rr >= 1.5 else "Fair"
-    print(f"  {pair:<12}  score={score:+d}  -> {s['direction'].upper()}  confidence={s['confidence']}%")
+    print(f"  {pair:<12}  score={score:+d}  -> {s['direction'].upper()}  strength={s['confidence']}%  (ADX {adx})")
     print(f"  Entry   : ${s['entry']:>14,.6f}     ATR      = {analysis['atr']:,.6f}")
     print(f"  SL      : ${s['stop_loss']:>14,.6f}     RR Ratio = 1 : {rr:.2f}  ({rr_label})")
     print(f"  TP      : ${s['take_profit']:>14,.6f}     Expires  = {exp_d} day(s)  [{s['expires_at'][:10]}]")
@@ -1051,9 +1072,9 @@ def handler(event=None, context=None):
                 stats["no_signal"] += 1
                 continue
 
-            conf = analysis["signal"]["confidence"]
-            if conf < MIN_SIGNAL_CONFIDENCE:
-                print(f"\n  [LOW CONF]  {pair}  {conf}% < {MIN_SIGNAL_CONFIDENCE}% threshold — discarded")
+            strength = analysis["signal"]["confidence"]
+            if strength < MIN_SIGNAL_STRENGTH:
+                print(f"\n  [LOW STR]  {pair}  strength {strength}% < {MIN_SIGNAL_STRENGTH}% — discarded")
                 stats["low_confidence"] += 1
                 continue
 
@@ -1068,7 +1089,7 @@ def handler(event=None, context=None):
             print(f"\n  [ERR] {msg}")
             stats["errors"].append(msg)
 
-    # ── Pass 2: rank by confidence desc, keep only up to slots_left ──────────
+    # ── Pass 2: rank by signal strength desc, keep only up to slots_left ─────
     candidates.sort(key=lambda a: a["signal"]["confidence"], reverse=True)
     to_insert = candidates[:slots_left]
     overflow  = candidates[slots_left:]
@@ -1078,7 +1099,7 @@ def handler(event=None, context=None):
         print(f"  Dropped (exceed daily cap of {MAX_SIGNALS} — {today_count} already today):")
         for a in overflow:
             s = a["signal"]
-            print(f"    {s['pair']:<12}  {s['direction'].upper():<5}  confidence={s['confidence']}%  — not inserted")
+            print(f"    {s['pair']:<12}  {s['direction'].upper():<5}  strength={s['confidence']}%  — not inserted")
 
     # ── Pass 3: insert the winners ────────────────────────────────────────────
     if to_insert:
@@ -1090,7 +1111,7 @@ def handler(event=None, context=None):
         try:
             supabase.table("trade_signals").insert(sig).execute()
             print(f"  [DB OK]  {sig['pair']:<12}  {sig['direction'].upper():<5}  "
-                  f"confidence={sig['confidence']}%  "
+                  f"strength={sig['confidence']}%  "
                   f"RR=1:{sig['rr_ratio']:.2f}  "
                   f"entry=${sig['entry']:,.4f}  id={sig['id'][:8]}...")
             stats["inserted"] += 1
@@ -1113,7 +1134,7 @@ def handler(event=None, context=None):
     print(f"\n{SEP}")
     print(f"[generate_signals] Done")
     print(f"  Inserted         : {stats['inserted']}  (daily cap={MAX_SIGNALS}, today total={today_count + stats['inserted']})")
-    print(f"  Low confidence   : {stats['low_confidence']}  (below {MIN_SIGNAL_CONFIDENCE}%)")
+    print(f"  Low strength     : {stats['low_confidence']}  (below {MIN_SIGNAL_STRENGTH}%)")
     print(f"  No signal        : {stats['no_signal']}")
     print(f"  Already pending  : {stats['skipped_existing']}")
     print(f"  Errors           : {len(stats['errors'])}")

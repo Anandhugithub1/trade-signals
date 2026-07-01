@@ -175,7 +175,7 @@ class _ConfidenceCard extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Confidence', style: TextStyle(color: c.t2, fontSize: 14)),
+              Text('Signal Strength', style: TextStyle(color: c.t2, fontSize: 14)),
               Text('${signal.confidence}%',
                   style: TextStyle(
                       color: dirColor,
@@ -196,10 +196,10 @@ class _ConfidenceCard extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             signal.confidence >= 80
-                ? 'High confidence — strong setup'
+                ? 'High strength — strong setup'
                 : signal.confidence >= 65
-                    ? 'Moderate confidence — trade with care'
-                    : 'Lower confidence — reduce position size',
+                    ? 'Moderate strength — trade with care'
+                    : 'Lower strength — reduce position size',
             style:
                 TextStyle(color: dirColor.withValues(alpha: 0.75), fontSize: 12),
           ),
