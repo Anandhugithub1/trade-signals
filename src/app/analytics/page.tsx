@@ -1,40 +1,48 @@
 'use client'
 import { useEffect, useState } from 'react'
+import {
+  PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  AreaChart, Area,
+} from 'recharts'
 import { supabase, isConfigured } from '@/lib/supabase'
 import { isAdmin } from '@/lib/admin'
 import { createClient } from '@/lib/supabase'
-import type { TradeSignal, SignalVote } from '@/types/signal'
+import type { TradeSignal } from '@/types/signal'
 
-// ── types ─────────────────────────────────────────────────────────────────────
 interface MarketSentiment {
-  id: string
-  date: string
-  bullish_pct: number
-  neutral_pct: number
-  bearish_pct: number
-  fear_greed_value: number | null
-  fear_greed_label: string | null
-  active_longs: number
-  active_shorts: number
-  dominant: string
+  id: string; date: string
+  bullish_pct: number; neutral_pct: number; bearish_pct: number
+  fear_greed_value: number | null; fear_greed_label: string | null
+  active_longs: number; active_shorts: number; dominant: string
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-function rrBucket(rr: number | null): string {
-  if (!rr) return 'N/A'
-  if (rr < 1.5) return '1:1 – 1.5'
-  if (rr < 2.0) return '1:1.5 – 2'
-  if (rr < 3.0) return '1:2 – 3'
-  return '1:3+'
+// ── colours ───────────────────────────────────────────────────────────────────
+const C = {
+  green:  '#22c55e',
+  red:    '#ef4444',
+  amber:  '#f59e0b',
+  blue:   '#6366f1',
+  gray:   '#64748b',
+  muted:  '#334155',
+  text:   '#94a3b8',
 }
-function confBucket(c: number): string {
-  if (c < 70) return '60-70%'
-  if (c < 80) return '70-80%'
-  if (c < 90) return '80-90%'
-  return '90%+'
-}
-function winRate(wins: number, total: number) {
-  return total ? Math.round((wins / total) * 100) : 0
+
+function winRate(w: number, t: number) { return t ? Math.round((w / t) * 100) : 0 }
+
+// ── custom tooltip ────────────────────────────────────────────────────────────
+function DarkTooltip({ active, payload, label }: any) {
+  if (!active || !payload?.length) return null
+  return (
+    <div className="bg-[#1a1a24] border border-[#2a2a3a] rounded-lg px-3 py-2 text-xs shadow-xl">
+      {label && <p className="text-[#94a3b8] mb-1 font-semibold">{label}</p>}
+      {payload.map((p: any, i: number) => (
+        <p key={i} style={{ color: p.color ?? p.fill }}>
+          {p.name}: <span className="font-bold">{p.value}{p.name?.includes('%') || p.name === 'Win Rate' ? '%' : ''}</span>
+        </p>
+      ))}
+    </div>
+  )
 }
 
 // ── main page ─────────────────────────────────────────────────────────────────
@@ -46,31 +54,27 @@ export default function AnalyticsPage() {
   const [error, setError]         = useState<string | null>(null)
 
   useEffect(() => {
-    const client = createClient()
-    client.auth.getUser().then(({ data }) => setUser(data.user))
+    createClient().auth.getUser().then(({ data }) => setUser(data.user))
   }, [])
 
   useEffect(() => {
     if (!isConfigured || user === null) return
     if (!isAdmin(user?.email)) { setLoading(false); return }
-
     async function load() {
       const [sigRes, sentRes] = await Promise.all([
         supabase.from('trade_signals').select('*').order('timestamp', { ascending: false }),
-        supabase.from('market_sentiment').select('*').order('date', { ascending: false }).limit(14),
+        supabase.from('market_sentiment').select('*').order('date', { ascending: true }).limit(14),
       ])
-      if (sigRes.error)  setError(sigRes.error.message)
-      else               setSignals(sigRes.data ?? [])
+      if (sigRes.error) setError(sigRes.error.message)
+      else setSignals(sigRes.data ?? [])
       if (!sentRes.error) setSentiment(sentRes.data ?? [])
       setLoading(false)
     }
     load()
   }, [user])
 
-  // Waiting for user to load
-  if (user === null) return <LoadingState />
+  if (user === null || loading) return <LoadingState />
 
-  // Access denied
   if (!isAdmin(user?.email)) {
     return (
       <div className="p-8 flex items-center justify-center min-h-[60vh]">
@@ -81,343 +85,319 @@ export default function AnalyticsPage() {
             </svg>
           </div>
           <h2 className="text-lg font-bold text-white mb-2">Admin Access Required</h2>
-          <p className="text-[#64748b] text-sm">
-            Analytics is restricted to admin accounts. Set{' '}
-            <code className="text-[#818cf8] bg-[#2a2a3a] px-1.5 py-0.5 rounded text-xs">NEXT_PUBLIC_ADMIN_EMAILS</code>{' '}
-            in your <code className="text-[#818cf8] bg-[#2a2a3a] px-1.5 py-0.5 rounded text-xs">.env.local</code>.
-          </p>
+          <p className="text-[#64748b] text-sm">Set <code className="text-[#818cf8] bg-[#2a2a3a] px-1 rounded">NEXT_PUBLIC_ADMIN_EMAILS</code> in <code className="text-[#818cf8] bg-[#2a2a3a] px-1 rounded">.env.local</code>.</p>
         </div>
       </div>
     )
   }
 
-  if (loading) return <LoadingState />
-
-  const closed   = signals.filter((s) => s.result === 'win' || s.result === 'loss')
-  const wins     = closed.filter((s) => s.result === 'win')
-  const losses   = closed.filter((s) => s.result === 'loss')
-  const pending  = signals.filter((s) => s.result === 'pending')
-  const longs    = signals.filter((s) => s.direction === 'long')
-  const shorts   = signals.filter((s) => s.direction === 'short')
-  const longWins = longs.filter((s) => s.result === 'win')
-  const shortWins = shorts.filter((s) => s.result === 'win')
+  // ── derived data ─────────────────────────────────────────────────────────────
+  const closed   = signals.filter(s => s.result === 'win' || s.result === 'loss')
+  const wins     = signals.filter(s => s.result === 'win').length
+  const losses   = signals.filter(s => s.result === 'loss').length
+  const pending  = signals.filter(s => s.result === 'pending').length
+  const expired  = signals.filter(s => s.result === 'expired').length
+  const longs    = signals.filter(s => s.direction === 'long')
+  const shorts   = signals.filter(s => s.direction === 'short')
+  const wr       = winRate(wins, closed.length)
   const avgConf  = signals.length ? Math.round(signals.reduce((a, s) => a + s.confidence, 0) / signals.length) : 0
-  const avgRR    = closed.length
-    ? (closed.reduce((a, s) => a + (s.rr_ratio ?? 0), 0) / closed.length).toFixed(2)
-    : ('—' as string)
-  const wr       = winRate(wins.length, closed.length)
 
-  // Confidence buckets
-  const confBuckets = ['60-70%', '70-80%', '80-90%', '90%+']
-  const confData = confBuckets.map((b) => {
-    const inBucket = closed.filter((s) => confBucket(s.confidence) === b)
-    const bWins = inBucket.filter((s) => s.result === 'win')
-    return { label: b, total: inBucket.length, wins: bWins.length, wr: winRate(bWins.length, inBucket.length) }
+  // Pie data
+  const resultPie = [
+    { name: 'Win',     value: wins,    color: C.green },
+    { name: 'Loss',    value: losses,  color: C.red },
+    { name: 'Pending', value: pending, color: C.amber },
+    { name: 'Expired', value: expired, color: C.gray },
+  ].filter(d => d.value > 0)
+
+  const directionPie = [
+    { name: 'Long',  value: longs.length,  color: C.green },
+    { name: 'Short', value: shorts.length, color: C.red },
+  ].filter(d => d.value > 0)
+
+  // Pair bar data (win rate per pair)
+  const pairMap: Record<string, { wins: number; total: number }> = {}
+  closed.forEach(s => {
+    if (!pairMap[s.pair]) pairMap[s.pair] = { wins: 0, total: 0 }
+    pairMap[s.pair].total++
+    if (s.result === 'win') pairMap[s.pair].wins++
+  })
+  const pairBar = Object.entries(pairMap)
+    .map(([pair, d]) => ({ pair, winRate: winRate(d.wins, d.total), wins: d.wins, total: d.total }))
+    .sort((a, b) => b.winRate - a.winRate)
+    .slice(0, 10)
+
+  // Confidence buckets bar
+  const confBuckets = [
+    { bucket: '60-70%', min: 60, max: 70 },
+    { bucket: '70-80%', min: 70, max: 80 },
+    { bucket: '80-90%', min: 80, max: 90 },
+    { bucket: '90%+',   min: 90, max: 101 },
+  ].map(b => {
+    const inB    = closed.filter(s => s.confidence >= b.min && s.confidence < b.max)
+    const bWins  = inB.filter(s => s.result === 'win').length
+    return { ...b, count: inB.length, winRate: winRate(bWins, inB.length) }
   })
 
-  // RR buckets
-  const rrBuckets = ['1:1 – 1.5', '1:1.5 – 2', '1:2 – 3', '1:3+']
-  const rrData = rrBuckets.map((b) => {
-    const inBucket = closed.filter((s) => rrBucket(s.rr_ratio ?? null) === b)
-    const bWins = inBucket.filter((s) => s.result === 'win')
-    return { label: b, total: inBucket.length, wins: bWins.length, wr: winRate(bWins.length, inBucket.length) }
-  })
-
-  // Indicator hit rate (from votes_json)
-  const indicatorMap: Record<string, { winFires: number; lossFires: number; total: number }> = {}
-  closed.forEach((s) => {
+  // votes_json indicator bar
+  const indMap: Record<string, { wins: number; losses: number }> = {}
+  closed.forEach(s => {
     if (!s.votes_json) return
-    s.votes_json.forEach((v: SignalVote) => {
-      if (v.vote === 0) return
-      if (!indicatorMap[v.name]) indicatorMap[v.name] = { winFires: 0, lossFires: 0, total: 0 }
-      indicatorMap[v.name].total++
-      if (s.result === 'win') indicatorMap[v.name].winFires++
-      else indicatorMap[v.name].lossFires++
+    Object.entries(s.votes_json as Record<string, number>).forEach(([name]) => {
+      if (!indMap[name]) indMap[name] = { wins: 0, losses: 0 }
+      if (s.result === 'win') indMap[name].wins++
+      else indMap[name].losses++
     })
   })
-  const indicators = Object.entries(indicatorMap)
-    .map(([name, d]) => ({ name, ...d, wr: winRate(d.winFires, d.total) }))
-    .sort((a, b) => b.total - a.total)
+  const indBar = Object.entries(indMap)
+    .map(([name, d]) => ({
+      name,
+      winRate: winRate(d.wins, d.wins + d.losses),
+      fires: d.wins + d.losses,
+    }))
+    .filter(d => d.fires >= 2)
+    .sort((a, b) => b.winRate - a.winRate)
 
-  // Pair stats
-  const pairMap: Record<string, { wins: number; losses: number; pending: number }> = {}
-  signals.forEach((s) => {
-    if (!pairMap[s.pair]) pairMap[s.pair] = { wins: 0, losses: 0, pending: 0 }
-    if (s.result === 'win')     pairMap[s.pair].wins++
-    else if (s.result === 'loss') pairMap[s.pair].losses++
-    else                          pairMap[s.pair].pending++
-  })
-  const pairs = Object.entries(pairMap)
-    .map(([pair, d]) => ({ pair, ...d, total: d.wins + d.losses + d.pending, closed: d.wins + d.losses }))
-    .sort((a, b) => b.total - a.total)
+  // Sentiment area chart
+  const sentimentArea = sentiment.map(s => ({
+    date:    s.date.slice(5),   // "MM-DD"
+    Bullish: s.bullish_pct,
+    Neutral: s.neutral_pct,
+    Bearish: s.bearish_pct,
+    FG:      s.fear_greed_value ?? 0,
+  }))
 
   return (
     <div className="p-8 space-y-8">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Analytics</h1>
-          <p className="text-[#64748b] text-sm mt-1">
-            Deep signal intelligence — {signals.length} signals analysed
-            <span className="ml-2 text-[#6366f1] font-medium">Admin only</span>
-          </p>
-        </div>
+      <div>
+        <h1 className="text-2xl font-bold text-white tracking-tight">Analytics</h1>
+        <p className="text-[#64748b] text-sm mt-1">
+          {signals.length} signals · {closed.length} closed · <span className="text-[#6366f1] font-medium">Admin only</span>
+        </p>
       </div>
 
-      {error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">
-          {error}
-        </div>
-      )}
+      {error && <div className="bg-red-500/10 border border-red-500/30 text-red-400 rounded-lg px-4 py-3 text-sm">{error}</div>}
 
-      {/* Overview cards */}
+      {/* KPI row */}
       <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3">
         {[
-          { label: 'Total',      value: signals.length,         color: '' },
-          { label: 'Win Rate',   value: `${wr}%`,               color: wr >= 60 ? 'green' : wr >= 40 ? 'amber' : 'red' },
-          { label: 'Wins',       value: wins.length,            color: 'green' },
-          { label: 'Losses',     value: losses.length,          color: 'red' },
-          { label: 'Pending',    value: pending.length,         color: 'amber' },
-          { label: 'Avg Conf',   value: `${avgConf}%`,          color: '' },
-          { label: 'Avg RR',     value: `1:${avgRR}`,           color: '' },
+          { label: 'Total',    value: signals.length,      color: '' },
+          { label: 'Win Rate', value: `${wr}%`,            color: wr >= 60 ? 'green' : wr >= 40 ? 'amber' : 'red' },
+          { label: 'Wins',     value: wins,                color: 'green' },
+          { label: 'Losses',   value: losses,              color: 'red' },
+          { label: 'Pending',  value: pending,             color: 'amber' },
+          { label: 'Avg Conf', value: `${avgConf}%`,       color: '' },
+          { label: 'Pairs',    value: pairBar.length,      color: '' },
         ].map(({ label, value, color }) => (
           <div key={label} className="bg-[#1a1a24] border border-[#2a2a3a] rounded-xl p-4">
             <p className="text-[9px] text-[#475569] uppercase tracking-widest font-semibold">{label}</p>
-            <p className={`text-xl font-bold mt-1.5 ${
-              color === 'green' ? 'text-[#22c55e]' : color === 'red' ? 'text-[#ef4444]' : color === 'amber' ? 'text-amber-400' : 'text-white'
-            }`}>{value}</p>
+            <p className={`text-xl font-bold mt-1.5 ${color === 'green' ? 'text-[#22c55e]' : color === 'red' ? 'text-[#ef4444]' : color === 'amber' ? 'text-amber-400' : 'text-white'}`}>
+              {value}
+            </p>
           </div>
         ))}
       </div>
 
-      {/* Direction analysis + Pair table */}
+      {/* Pie charts row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Direction breakdown */}
-        <Card title="Direction Analysis">
-          <div className="space-y-5">
-            {[
-              { label: 'LONG',  color: '#22c55e', bg: '#22c55e15', count: longs.length,  winsCount: longWins.length,  closedCount: longs.filter(s => s.result !== 'pending').length },
-              { label: 'SHORT', color: '#ef4444', bg: '#ef444415', count: shorts.length, winsCount: shortWins.length, closedCount: shorts.filter(s => s.result !== 'pending').length },
-            ].map(({ label, color, bg, count, winsCount, closedCount }) => {
-              const pct = winRate(winsCount, closedCount)
-              return (
-                <div key={label}>
-                  <div className="flex justify-between text-xs mb-2">
-                    <span className="font-bold px-2 py-0.5 rounded text-xs" style={{ color, background: bg }}>{label}</span>
-                    <span className="text-[#94a3b8]">{count} signals · {winsCount}W / {closedCount - winsCount}L · <span style={{ color }}>{pct}% WR</span></span>
-                  </div>
-                  <div className="h-2 bg-[#2a2a3a] rounded-full overflow-hidden flex">
-                    <div className="h-full" style={{ width: `${pct}%`, background: color }} />
-                    <div className="h-full bg-[#ef4444]/40" style={{ width: `${100 - pct}%` }} />
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+        <Card title="Result Distribution">
+          {resultPie.length === 0 ? <Empty /> : (
+            <ResponsiveContainer width="100%" height={240}>
+              <PieChart>
+                <Pie data={resultPie} cx="50%" cy="50%" innerRadius={60} outerRadius={90}
+                  dataKey="value" label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                  labelLine={false}>
+                  {resultPie.map((d, i) => <Cell key={i} fill={d.color} />)}
+                </Pie>
+                <Tooltip content={<DarkTooltip />} />
+                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12, color: C.text }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
         </Card>
 
-        {/* Pair performance table */}
-        <Card title="Performance by Pair">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-[#475569] border-b border-[#2a2a3a]">
-                  <th className="text-left pb-2 font-semibold">Pair</th>
-                  <th className="text-right pb-2 font-semibold">W</th>
-                  <th className="text-right pb-2 font-semibold">L</th>
-                  <th className="text-right pb-2 font-semibold">Open</th>
-                  <th className="text-right pb-2 font-semibold">WR%</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pairs.map((p) => (
-                  <tr key={p.pair} className="border-b border-[#2a2a3a]/40 hover:bg-[#1f1f2e]">
-                    <td className="py-2 font-bold text-white">{p.pair}</td>
-                    <td className="py-2 text-right text-[#22c55e]">{p.wins}</td>
-                    <td className="py-2 text-right text-[#ef4444]">{p.losses}</td>
-                    <td className="py-2 text-right text-amber-400">{p.pending}</td>
-                    <td className="py-2 text-right">
-                      {p.closed > 0 ? (
-                        <span className={`font-bold ${winRate(p.wins, p.closed) >= 60 ? 'text-[#22c55e]' : winRate(p.wins, p.closed) >= 40 ? 'text-amber-400' : 'text-[#ef4444]'}`}>
-                          {winRate(p.wins, p.closed)}%
-                        </span>
-                      ) : (
-                        <span className="text-[#475569]">—</span>
-                      )}
-                    </td>
-                  </tr>
+        <Card title="Direction Distribution">
+          {directionPie.length === 0 ? <Empty /> : (
+            <ResponsiveContainer width="100%" height={240}>
+              <PieChart>
+                <Pie data={directionPie} cx="50%" cy="50%" innerRadius={60} outerRadius={90}
+                  dataKey="value" label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                  labelLine={false}>
+                  {directionPie.map((d, i) => <Cell key={i} fill={d.color} />)}
+                </Pie>
+                <Tooltip content={<DarkTooltip />} />
+                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12, color: C.text }} />
+              </PieChart>
+            </ResponsiveContainer>
+          )}
+        </Card>
+      </div>
+
+      {/* Bar charts row */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card title="Win Rate by Pair">
+          {pairBar.length === 0 ? <Empty text="No closed signals yet." /> : (
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={pairBar} layout="vertical" margin={{ left: 10, right: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e2a3d" />
+                <XAxis type="number" domain={[0, 100]} tick={{ fill: C.text, fontSize: 11 }} tickFormatter={v => `${v}%`} />
+                <YAxis type="category" dataKey="pair" tick={{ fill: C.text, fontSize: 11 }} width={72} />
+                <Tooltip content={<DarkTooltip />} />
+                <Bar dataKey="winRate" name="Win Rate" radius={[0, 4, 4, 0]}>
+                  {pairBar.map((d, i) => (
+                    <Cell key={i} fill={d.winRate >= 60 ? C.green : d.winRate >= 40 ? C.amber : C.red} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </Card>
+
+        <Card title="Win Rate by Confidence Band">
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={confBuckets} margin={{ right: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2a3d" />
+              <XAxis dataKey="bucket" tick={{ fill: C.text, fontSize: 11 }} />
+              <YAxis domain={[0, 100]} tick={{ fill: C.text, fontSize: 11 }} tickFormatter={v => `${v}%`} />
+              <Tooltip content={<DarkTooltip />} />
+              <Bar dataKey="winRate" name="Win Rate" radius={[4, 4, 0, 0]}>
+                {confBuckets.map((d, i) => (
+                  <Cell key={i} fill={d.winRate >= 60 ? C.green : d.winRate >= 40 ? C.amber : C.red} />
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </Card>
       </div>
 
-      {/* Confidence + RR buckets */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card title="Win Rate by Confidence Score">
-          <div className="space-y-4">
-            {confData.map((b) => (
-              <div key={b.label}>
-                <div className="flex justify-between text-xs mb-1.5">
-                  <span className="text-[#94a3b8] font-semibold">{b.label}</span>
-                  <span className="text-[#64748b]">{b.wins}W / {b.total - b.wins}L
-                    {b.total > 0 && <span className={`ml-2 font-bold ${b.wr >= 60 ? 'text-[#22c55e]' : b.wr >= 40 ? 'text-amber-400' : 'text-[#ef4444]'}`}>{b.wr}%</span>}
-                  </span>
-                </div>
-                <div className="h-2 bg-[#2a2a3a] rounded-full overflow-hidden">
-                  {b.total > 0
-                    ? <div className="h-full rounded-full" style={{ width: `${b.wr}%`, background: b.wr >= 60 ? '#22c55e' : b.wr >= 40 ? '#f59e0b' : '#ef4444' }} />
-                    : <div className="h-full w-full bg-[#2a2a3a]" />
-                  }
-                </div>
-                {b.total === 0 && <p className="text-[10px] text-[#334155] mt-0.5">No closed signals in this range yet</p>}
-              </div>
-            ))}
+      {/* Votes_json — Indicator Analysis */}
+      <Card
+        title="Indicator Precision — Which indicators predicted wins"
+        subtitle="Powered by votes_json stored per signal. Each bar = % of times this indicator fired on a winning signal."
+      >
+        {indBar.length === 0 ? (
+          <div className="py-6 text-center">
+            <p className="text-[#475569] text-sm mb-1">No indicator data yet.</p>
+            <p className="text-[#334155] text-xs">
+              <code className="bg-[#2a2a3a] px-1.5 py-0.5 rounded">votes_json</code> is stored when signals are generated.
+              Once signals close (win/loss), this chart populates automatically.
+            </p>
           </div>
-        </Card>
-
-        <Card title="Win Rate by Risk:Reward Ratio">
-          <div className="space-y-4">
-            {rrData.map((b) => (
-              <div key={b.label}>
-                <div className="flex justify-between text-xs mb-1.5">
-                  <span className="text-[#94a3b8] font-semibold">{b.label}</span>
-                  <span className="text-[#64748b]">{b.wins}W / {b.total - b.wins}L
-                    {b.total > 0 && <span className={`ml-2 font-bold ${b.wr >= 60 ? 'text-[#22c55e]' : b.wr >= 40 ? 'text-amber-400' : 'text-[#ef4444]'}`}>{b.wr}%</span>}
-                  </span>
-                </div>
-                <div className="h-2 bg-[#2a2a3a] rounded-full overflow-hidden">
-                  {b.total > 0
-                    ? <div className="h-full rounded-full" style={{ width: `${b.wr}%`, background: b.wr >= 60 ? '#22c55e' : b.wr >= 40 ? '#f59e0b' : '#ef4444' }} />
-                    : <div className="h-full w-full bg-[#2a2a3a]" />
-                  }
-                </div>
-                {b.total === 0 && <p className="text-[10px] text-[#334155] mt-0.5">No closed signals in this range yet</p>}
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-
-      {/* Indicator hit rate */}
-      <Card title="Indicator Analysis — Which signals fired on winners vs losers">
-        {indicators.length === 0 ? (
-          <p className="text-[#475569] text-sm py-2">
-            No indicator data yet. signals need <code className="text-[#818cf8] bg-[#2a2a3a] px-1 rounded text-xs">votes_json</code> column populated by the generator.
-          </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-[#475569] border-b border-[#2a2a3a]">
-                  <th className="text-left pb-2 font-semibold w-36">Indicator</th>
-                  <th className="text-right pb-2 font-semibold">Total fires</th>
-                  <th className="text-right pb-2 font-semibold">On winners</th>
-                  <th className="text-right pb-2 font-semibold">On losers</th>
-                  <th className="text-right pb-2 font-semibold">Precision</th>
-                  <th className="pb-2 pl-4">Reliability</th>
-                </tr>
-              </thead>
-              <tbody>
-                {indicators.map((ind) => (
-                  <tr key={ind.name} className="border-b border-[#2a2a3a]/40 hover:bg-[#1f1f2e]">
-                    <td className="py-2.5 font-bold text-white">{ind.name}</td>
-                    <td className="py-2.5 text-right text-[#94a3b8]">{ind.total}</td>
-                    <td className="py-2.5 text-right text-[#22c55e]">{ind.winFires}</td>
-                    <td className="py-2.5 text-right text-[#ef4444]">{ind.lossFires}</td>
-                    <td className="py-2.5 text-right">
-                      <span className={`font-bold ${ind.wr >= 60 ? 'text-[#22c55e]' : ind.wr >= 40 ? 'text-amber-400' : 'text-[#ef4444]'}`}>
-                        {ind.wr}%
-                      </span>
-                    </td>
-                    <td className="py-2.5 pl-4 w-40">
-                      <div className="h-1.5 bg-[#2a2a3a] rounded-full overflow-hidden">
-                        <div className="h-full rounded-full" style={{
-                          width: `${ind.wr}%`,
-                          background: ind.wr >= 60 ? '#22c55e' : ind.wr >= 40 ? '#f59e0b' : '#ef4444',
-                        }} />
-                      </div>
-                    </td>
-                  </tr>
+          <ResponsiveContainer width="100%" height={Math.max(240, indBar.length * 32)}>
+            <BarChart data={indBar} layout="vertical" margin={{ left: 10, right: 30 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2a3d" />
+              <XAxis type="number" domain={[0, 100]} tick={{ fill: C.text, fontSize: 11 }} tickFormatter={v => `${v}%`} />
+              <YAxis type="category" dataKey="name" tick={{ fill: C.text, fontSize: 11 }} width={88} />
+              <Tooltip content={<DarkTooltip />} formatter={(v: any) => [`${v}%`, 'Precision']} />
+              <Bar dataKey="winRate" name="Precision" radius={[0, 4, 4, 0]}>
+                {indBar.map((d, i) => (
+                  <Cell key={i} fill={d.winRate >= 65 ? C.green : d.winRate >= 45 ? C.amber : C.red} />
                 ))}
-              </tbody>
-            </table>
-          </div>
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         )}
       </Card>
 
-      {/* Sentiment history */}
-      <Card title="Market Sentiment History — Last 14 days">
-        {sentiment.length === 0 ? (
-          <p className="text-[#475569] text-sm py-2">No sentiment data yet. Run generate_signals to populate.</p>
+      {/* Sentiment area chart */}
+      <Card
+        title="Market Sentiment — Last 14 days"
+        subtitle="Bullish / Neutral / Bearish % from generate_signals daily analysis"
+      >
+        {sentimentArea.length === 0 ? (
+          <Empty text="No sentiment data yet. Run generate_signals to populate." />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-[#475569] border-b border-[#2a2a3a]">
-                  <th className="text-left pb-2 font-semibold">Date</th>
-                  <th className="text-right pb-2 font-semibold">Bullish</th>
-                  <th className="text-right pb-2 font-semibold">Neutral</th>
-                  <th className="text-right pb-2 font-semibold">Bearish</th>
-                  <th className="text-right pb-2 font-semibold">F&G</th>
-                  <th className="text-right pb-2 font-semibold">Longs</th>
-                  <th className="text-right pb-2 font-semibold">Shorts</th>
-                  <th className="pb-2 pl-4">Breakdown</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sentiment.map((s) => (
-                  <tr key={s.id} className="border-b border-[#2a2a3a]/40 hover:bg-[#1f1f2e]">
-                    <td className="py-2.5 font-semibold text-white">{s.date}</td>
-                    <td className="py-2.5 text-right text-[#22c55e]">{s.bullish_pct}%</td>
-                    <td className="py-2.5 text-right text-amber-400">{s.neutral_pct}%</td>
-                    <td className="py-2.5 text-right text-[#ef4444]">{s.bearish_pct}%</td>
-                    <td className="py-2.5 text-right text-[#94a3b8]">{s.fear_greed_value ?? '—'}</td>
-                    <td className="py-2.5 text-right text-[#22c55e]">{s.active_longs}</td>
-                    <td className="py-2.5 text-right text-[#ef4444]">{s.active_shorts}</td>
-                    <td className="py-2.5 pl-4 w-32">
-                      <div className="h-2 rounded-full overflow-hidden flex">
-                        <div className="h-full bg-[#22c55e]" style={{ width: `${s.bullish_pct}%` }} />
-                        <div className="h-full bg-amber-500/60" style={{ width: `${s.neutral_pct}%` }} />
-                        <div className="h-full bg-[#ef4444]" style={{ width: `${s.bearish_pct}%` }} />
+          <ResponsiveContainer width="100%" height={240}>
+            <AreaChart data={sentimentArea} margin={{ right: 10 }}>
+              <defs>
+                {[['bullGrad', C.green], ['neutralGrad', C.amber], ['bearGrad', C.red]].map(([id, color]) => (
+                  <linearGradient key={id} id={id} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor={color} stopOpacity={0.3} />
+                    <stop offset="95%" stopColor={color} stopOpacity={0.02} />
+                  </linearGradient>
+                ))}
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e2a3d" />
+              <XAxis dataKey="date" tick={{ fill: C.text, fontSize: 11 }} />
+              <YAxis domain={[0, 100]} tick={{ fill: C.text, fontSize: 11 }} tickFormatter={v => `${v}%`} />
+              <Tooltip content={<DarkTooltip />} />
+              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12, color: C.text }} />
+              <Area type="monotone" dataKey="Bullish" stroke={C.green} fill="url(#bullGrad)" strokeWidth={2} />
+              <Area type="monotone" dataKey="Neutral" stroke={C.amber} fill="url(#neutralGrad)" strokeWidth={2} />
+              <Area type="monotone" dataKey="Bearish" stroke={C.red}   fill="url(#bearGrad)"   strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </Card>
+
+      {/* Pair table */}
+      <Card title="Performance by Pair — Detail">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-[#475569] border-b border-[#2a2a3a]">
+                {['Pair', 'W', 'L', 'Open', 'WR%', 'Trend'].map(h => (
+                  <th key={h} className={`pb-2 font-semibold ${h === 'Pair' ? 'text-left' : 'text-right'}`}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(pairMap).map(([pair, d]) => {
+                const t  = d.wins + d.total - d.wins  // total closed = d.total
+                const wr = winRate(d.wins, d.total)
+                const pend = signals.filter(s => s.pair === pair && s.result === 'pending').length
+                return (
+                  <tr key={pair} className="border-b border-[#2a2a3a]/40 hover:bg-[#1f1f2e]">
+                    <td className="py-2.5 font-bold text-white">{pair}</td>
+                    <td className="py-2.5 text-right text-[#22c55e]">{d.wins}</td>
+                    <td className="py-2.5 text-right text-[#ef4444]">{d.total - d.wins}</td>
+                    <td className="py-2.5 text-right text-amber-400">{pend}</td>
+                    <td className="py-2.5 text-right">
+                      <span className={`font-bold ${wr >= 60 ? 'text-[#22c55e]' : wr >= 40 ? 'text-amber-400' : 'text-[#ef4444]'}`}>{wr}%</span>
+                    </td>
+                    <td className="py-2.5 pl-4 w-28">
+                      <div className="h-1.5 bg-[#2a2a3a] rounded-full overflow-hidden">
+                        <div className="h-full rounded-full" style={{ width: `${wr}%`, background: wr >= 60 ? C.green : wr >= 40 ? C.amber : C.red }} />
                       </div>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
       </Card>
     </div>
   )
 }
 
-// ── shared components ─────────────────────────────────────────────────────────
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
+// ── shared ─────────────────────────────────────────────────────────────────────
+function Card({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
     <div className="bg-[#1a1a24] rounded-xl border border-[#2a2a3a] p-5">
-      <h2 className="text-sm font-semibold text-white mb-4">{title}</h2>
+      <div className="mb-4">
+        <h2 className="text-sm font-semibold text-white">{title}</h2>
+        {subtitle && <p className="text-[11px] text-[#475569] mt-0.5">{subtitle}</p>}
+      </div>
       {children}
     </div>
   )
+}
+
+function Empty({ text = 'No data yet.' }: { text?: string }) {
+  return <p className="text-[#475569] text-sm py-6 text-center">{text}</p>
 }
 
 function LoadingState() {
   return (
     <div className="p-8 space-y-6">
       <div className="h-8 w-48 bg-[#2a2a3a] rounded animate-pulse" />
-      <div className="grid grid-cols-4 gap-3">
-        {[...Array(7)].map((_, i) => (
-          <div key={i} className="h-20 bg-[#2a2a3a] rounded-xl animate-pulse" />
-        ))}
+      <div className="grid grid-cols-7 gap-3">
+        {[...Array(7)].map((_, i) => <div key={i} className="h-20 bg-[#2a2a3a] rounded-xl animate-pulse" />)}
       </div>
-      <div className="grid grid-cols-2 gap-6">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="h-64 bg-[#2a2a3a] rounded-xl animate-pulse" />
-        ))}
-      </div>
+      {[...Array(4)].map((_, i) => <div key={i} className="h-72 bg-[#2a2a3a] rounded-xl animate-pulse" />)}
     </div>
   )
 }
