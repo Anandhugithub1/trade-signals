@@ -1,6 +1,6 @@
 """
-generate_signals — creates trade signals for the top 15 crypto pairs
-by market cap using technical analysis + multi-source sentiment.
+generate_signals — creates trade signals for top 15 crypto pairs
+by market cap + Gold (XAUUSDT) and Silver (XAGUSDT) commodity perpetuals.
 
 ═══════════════════════════════════════════════════════════════════
  DATA SOURCES  (all free, no API keys required)
@@ -141,12 +141,16 @@ def _retry(fn, retries: int = 3, backoff: float = 1.5, label: str = ""):
 
     raise last_exc
 
-# Top 15 by market cap — excludes stablecoins (USDT/USDC/BUSD)
-# Pairs available on Binance/Bybit/OKX perpetual futures
+# Top 15 crypto by market cap + Gold & Silver commodity perpetuals
+# All available on Binance/Bybit/OKX USDT-M perpetual futures
 TOP_PAIRS = [
+    # ── Crypto (top 15 by market cap, stablecoins excluded) ──
     "BTCUSDT",  "ETHUSDT",  "BNBUSDT",  "SOLUSDT",  "XRPUSDT",   # 1–5
     "ADAUSDT",  "DOGEUSDT", "TRXUSDT",  "AVAXUSDT", "TONUSDT",    # 6–10
     "DOTUSDT",  "LINKUSDT", "LTCUSDT",  "BCHUSDT",  "UNIUSDT",    # 11–15
+    # ── Commodity perpetuals ─────────────────────────────────
+    "XAUUSDT",  # Gold  (XAU/USDT perpetual)
+    "XAGUSDT",  # Silver (XAG/USDT perpetual)
 ]
 
 MIN_BULL_SCORE       = 4    # net bullish votes required for LONG  (raised: 17 indicators now)
