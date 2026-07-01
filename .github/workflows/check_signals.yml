@@ -26,8 +26,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r backend/check_signals/requirements.txt
 
+      - name: Write Firebase service account
+        run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}' > /tmp/firebase-sa.json
+
       - name: Run check_signals
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FIREBASE_SERVICE_ACCOUNT_PATH: /tmp/firebase-sa.json
         run: python backend/check_signals/handler.py

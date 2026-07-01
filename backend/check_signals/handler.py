@@ -23,6 +23,8 @@ import time
 import requests
 from datetime import datetime, timezone, timedelta
 from supabase import create_client, Client
+from google.oauth2 import service_account
+import google.auth.transport.requests
 
 try:
     from dotenv import load_dotenv
@@ -33,6 +35,15 @@ except ImportError:
 # ── config ────────────────────────────────────────────────────────────────────
 SUPABASE_URL         = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+
+def _load_firebase_sa() -> str:
+    path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_PATH", "")
+    if path and os.path.isfile(path):
+        with open(path) as f:
+            return f.read()
+    return os.environ.get("FIREBASE_SERVICE_ACCOUNT_JSON", "")
+
+FIREBASE_SA_JSON = _load_firebase_sa()
 
 BINANCE_FUTURES    = "https://fapi.binance.com/fapi/v1/klines"   # USDT-M Futures (blocked in US/India)
 BYBIT_KLINES       = "https://api.bybit.com/v5/market/kline"     # Bybit perpetual (blocked on Azure)
@@ -330,6 +341,95 @@ def log_result(result, close_price, diag: dict, direction: str) -> None:
             print(f"  Distance to TP   : {tp_sign}{dtp:.2f}%   (TP {'above' if direction=='long' else 'below'} current price)")
 
 
+# ── push notifications ───────────────────────────────────────────────────────
+
+def _fcm_token() -> tuple[str, str] | None:
+    """Returns (bearer_token, project_id) or None if not configured."""
+    if not FIREBASE_SA_JSON:
+        return None
+    try:
+        sa    = json.loads(FIREBASE_SA_JSON)
+        creds = service_account.Credentials.from_service_account_info(
+            sa, scopes=["https://www.googleapis.com/auth/firebase.messaging"]
+        )
+        creds.refresh(google.auth.transport.requests.Request())
+        return creds.token, sa["project_id"]
+    except Exception as exc:
+        print(f"  [FCM] token error: {exc}")
+        return None
+
+
+def _notify_signal_result(supabase, signal: dict, result: str, close_price: float | None) -> None:
+    """
+    Send push notification to all enabled devices when SL or TP is hit.
+
+    WIN  → "BTCUSDT LONG  ✓ Take Profit hit — +1.92%"
+    LOSS → "BTCUSDT LONG  ✗ Stop Loss hit  — -2.00%"
+    """
+    if result not in ("win", "loss"):
+        return
+
+    fcm = _fcm_token()
+    if not fcm:
+        return
+
+    bearer, project_id = fcm
+
+    # Fetch enabled device tokens
+    try:
+        res    = supabase.table("notification_tokens").select("device_token").eq("is_enabled", True).execute()
+        tokens = [r["device_token"] for r in (res.data or [])]
+    except Exception:
+        tokens = []
+
+    if not tokens:
+        return
+
+    pair      = signal["pair"]
+    direction = signal["direction"].upper()
+    entry     = float(signal.get("entry") or signal.get("entry_price", 0))
+
+    # Calculate P&L %
+    pnl_str = ""
+    if close_price and entry:
+        diff     = close_price - entry
+        directed = diff if signal["direction"] == "long" else -diff
+        pnl      = (directed / entry) * 100
+        pnl_str  = f"  {'+' if pnl >= 0 else ''}{pnl:.2f}%"
+
+    if result == "win":
+        title = f"{pair} {direction} — Take Profit Hit"
+        body  = f"TP reached at ${close_price:,.4f}{pnl_str}"
+    else:
+        title = f"{pair} {direction} — Stop Loss Hit"
+        body  = f"SL triggered at ${close_price:,.4f}{pnl_str}"
+
+    url     = f"https://fcm.googleapis.com/v1/projects/{project_id}/messages:send"
+    headers = {"Authorization": f"Bearer {bearer}", "Content-Type": "application/json"}
+
+    ok = fail = 0
+    for token in tokens:
+        try:
+            resp = requests.post(url, headers=headers, json={
+                "message": {
+                    "token": token,
+                    "notification": {"title": title, "body": body},
+                    "data": {"type": "signal_result", "result": result, "pair": pair},
+                    "android": {"priority": "high"},
+                    "apns": {"payload": {"aps": {"sound": "default"}}},
+                }
+            }, timeout=8)
+            if resp.status_code == 200:
+                ok += 1
+            else:
+                fail += 1
+        except Exception:
+            fail += 1
+
+    tag = "[WIN]" if result == "win" else "[LOSS]"
+    print(f"  [FCM] {tag} push sent to {len(tokens)} device(s) — {ok} ok / {fail} failed")
+
+
 # ── main handler ──────────────────────────────────────────────────────────────
 
 def handler(event=None, context=None):
@@ -383,6 +483,10 @@ def handler(event=None, context=None):
                     label=f"DB update {pair}",
                 )
                 print(f"  Supabase updated  -> result={result}  latest_price=${latest:,.4f}" if latest else f"  Supabase updated  -> result={result}")
+
+                # Push notification for win/loss
+                _notify_signal_result(supabase, signal, result, close_price)
+
                 stats["updated"] += 1
             else:
                 print(f"  latest_price updated -> ${latest:,.4f}" if latest else "  latest_price: unavailable")
