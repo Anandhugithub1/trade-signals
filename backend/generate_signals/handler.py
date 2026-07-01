@@ -599,18 +599,12 @@ def analyze_pair(pair: str, candles: list,
     ─────────────────────────────────────────────────────────
     RSI(14)           < 35 (oversold)       > 65 (overbought)
     MACD histogram    positive              negative
-    MACD crossover    just crossed up       just crossed down  [bonus]
-    EMA 200           price above           price below
-    EMA 50            price above           price below
-    Bollinger %B      < 0.20 (low band)     > 0.80 (high band)
-    Volume spike      > 1.5× avg × trend   (amplifies, not standalone)
-    Fear & Greed      extreme fear          extreme greed
-    News sentiment    majority positive     majority negative
-    Macro events      rate cut / ceasefire  rate hike / war / recession
-    ─────────────────────────────────────────────────────────
+    Regime-filtered momentum — see the module docstring for the full strategy.
+    Returns an analysis dict; has_signal=True only when a trade is generated.
     """
     if len(candles) < 210:
-        return None  # not enough history
+        return {"score": 0, "price": 0.0, "atr": 0.0, "votes": [],
+                "has_signal": False, "reason": "insufficient history"}
 
     close  = np.array([float(c[4]) for c in candles])
     high   = np.array([float(c[2]) for c in candles])
