@@ -2,8 +2,9 @@ name: Check Signals
 
 on:
   schedule:
-    - cron: '0 2 * * *'   # 2:00 AM UTC daily — checks SL/TP + expires + 90-day cleanup
-  workflow_dispatch:        # manual trigger from GitHub Actions tab
+    - cron: '30 * * * *'   # every hour at :30 — checks SL/TP hits, expiry, 90-day cleanup
+  # Offset by 30 min so it doesn't run at the same time as generate_signals
+  workflow_dispatch:         # manual trigger from GitHub Actions tab
 
 jobs:
   run:
