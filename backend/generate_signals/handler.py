@@ -182,11 +182,17 @@ def _ema_array(data: np.ndarray, period: int) -> np.ndarray:
 
 
 def calc_rsi(close: np.ndarray, period: int = 14) -> float:
-    delta = np.diff(close[-period - 1:])
+    """Wilder's smoothed RSI — uses full history for a stable result."""
+    delta  = np.diff(close.astype(float))
     gains  = np.where(delta > 0, delta, 0.0)
     losses = np.where(delta < 0, -delta, 0.0)
-    avg_g = np.mean(gains)
-    avg_l = np.mean(losses)
+    # Seed with simple average over first `period` bars
+    avg_g  = np.mean(gains[:period])
+    avg_l  = np.mean(losses[:period])
+    # Wilder smoothing over remaining bars
+    for i in range(period, len(delta)):
+        avg_g = (avg_g * (period - 1) + gains[i])  / period
+        avg_l = (avg_l * (period - 1) + losses[i]) / period
     if avg_l == 0:
         return 100.0
     return 100.0 - 100.0 / (1.0 + avg_g / avg_l)
@@ -573,80 +579,73 @@ def analyze_pair(pair: str, candles: list,
     vol    = np.array([float(c[5]) for c in candles])
     price  = close[-1]
 
-    score   = 0
-    votes   = []   # (indicator, vote, reason_str)
+    score       = 0
+    votes       = []   # (indicator, vote, reason_str)
+    is_commodity = pair in ("XAUUSDT", "XAGUSDT")
 
-    # 1. RSI(14)
-    rsi_val = calc_rsi(close)
-    if rsi_val < 35:
-        score += 1; votes.append(("RSI", +1, f"RSI {rsi_val:.1f} — oversold"))
-    elif rsi_val > 65:
-        score -= 1; votes.append(("RSI", -1, f"RSI {rsi_val:.1f} — overbought"))
+    # ── 1. Oscillator consensus (RSI + StochRSI + Williams %R) ───────────────
+    # These three all measure overbought/oversold. They are highly correlated —
+    # counting each separately would triple-count one concept.
+    # Fix: take the majority vote across all three → cast a single ±1.
+    rsi_val  = calc_rsi(close)
+    srsi     = calc_stoch_rsi(close)
+    wr       = calc_williams_r(high, low, close)
+
+    osc_bull = sum([rsi_val < 35, srsi < 0.20, wr < -80])
+    osc_bear = sum([rsi_val > 65, srsi > 0.80, wr > -20])
+    osc_details = f"RSI {rsi_val:.1f}  StochRSI {srsi:.2f}  W%R {wr:.1f}"
+
+    if osc_bull >= 2:
+        score += 1; votes.append(("Oscillators", +1, f"oversold consensus ({osc_bull}/3)  {osc_details}"))
+    elif osc_bear >= 2:
+        score -= 1; votes.append(("Oscillators", -1, f"overbought consensus ({osc_bear}/3)  {osc_details}"))
     else:
-        votes.append(("RSI",  0, f"RSI {rsi_val:.1f} — neutral"))
+        votes.append(("Oscillators", 0, f"no consensus  {osc_details}"))
 
-    # 2. Stochastic RSI — more sensitive, good for extreme detection
-    srsi = calc_stoch_rsi(close)
-    if srsi < 0.20:
-        score += 1; votes.append(("StochRSI", +1, f"StochRSI {srsi:.2f} — oversold"))
-    elif srsi > 0.80:
-        score -= 1; votes.append(("StochRSI", -1, f"StochRSI {srsi:.2f} — overbought"))
-    else:
-        votes.append(("StochRSI", 0, f"StochRSI {srsi:.2f} — neutral"))
-
-    # 3. Williams %R — momentum oscillator
-    wr = calc_williams_r(high, low, close)
-    if wr < -80:
-        score += 1; votes.append(("Williams%R", +1, f"W%R {wr:.1f} — oversold"))
-    elif wr > -20:
-        score -= 1; votes.append(("Williams%R", -1, f"W%R {wr:.1f} — overbought"))
-    else:
-        votes.append(("Williams%R", 0, f"W%R {wr:.1f} — neutral"))
-
-    # 2. MACD histogram direction
+    # ── 2. MACD histogram direction ───────────────────────────────────────────
     _, _, hist_now, hist_prev = calc_macd(close)
     if hist_now > 0:
         score += 1; votes.append(("MACD hist",  +1, f"histogram {hist_now:+.4f} (bullish momentum)"))
     elif hist_now < 0:
         score -= 1; votes.append(("MACD hist",  -1, f"histogram {hist_now:+.4f} (bearish momentum)"))
 
-    # 3. MACD crossover bonus
+    # ── 3. MACD crossover bonus ───────────────────────────────────────────────
     if hist_prev < 0 < hist_now:
         score += 1; votes.append(("MACD cross", +1, "bullish crossover (hist flipped +)"))
     elif hist_prev > 0 > hist_now:
         score -= 1; votes.append(("MACD cross", -1, "bearish crossover (hist flipped -)"))
 
-    # 4. EMA 200 — macro trend filter
+    # ── 4. EMA 200 — macro trend ──────────────────────────────────────────────
     ema200 = calc_ema(close, 200)
     if price > ema200:
         score += 1; votes.append(("EMA200", +1, f"price {price:,.4f} > EMA200 {ema200:,.4f}"))
     else:
         score -= 1; votes.append(("EMA200", -1, f"price {price:,.4f} < EMA200 {ema200:,.4f}"))
 
-    # 6. EMA 50 — intermediate trend
+    # ── 5. EMA 50 — intermediate trend ───────────────────────────────────────
     ema50 = calc_ema(close, 50)
     if price > ema50:
         score += 1; votes.append(("EMA50",  +1, f"price > EMA50 {ema50:,.4f}"))
     else:
         score -= 1; votes.append(("EMA50",  -1, f"price < EMA50 {ema50:,.4f}"))
 
-    # 7. EMA 20/50 short-term crossover
+    # ── 6. EMA 20/50 short-term crossover ────────────────────────────────────
     ema20 = calc_ema(close, 20)
     if ema20 > ema50:
         score += 1; votes.append(("EMA20/50", +1, f"EMA20 {ema20:,.4f} > EMA50 — bullish cross"))
     else:
         score -= 1; votes.append(("EMA20/50", -1, f"EMA20 {ema20:,.4f} < EMA50 — bearish cross"))
 
-    # 8. Bollinger Bands
-    bb_upper, bb_mid, bb_lower, pct_b = calc_bollinger(close)
+    # ── 7. Bollinger Bands ────────────────────────────────────────────────────
+    _, _, _, pct_b = calc_bollinger(close)
     if pct_b < 0.20:
-        score += 1; votes.append(("BB",  +1, f"%B={pct_b:.2f} — near lower band (potential reversal up)"))
+        score += 1; votes.append(("BB",  +1, f"%B={pct_b:.2f} — near lower band (reversal up)"))
     elif pct_b > 0.80:
-        score -= 1; votes.append(("BB",  -1, f"%B={pct_b:.2f} — near upper band (potential reversal down)"))
+        score -= 1; votes.append(("BB",  -1, f"%B={pct_b:.2f} — near upper band (reversal down)"))
     else:
         votes.append(("BB",   0, f"%B={pct_b:.2f} — mid-band"))
 
-    # 9. OBV slope — volume confirms price trend
+    # ── 8. OBV slope — volume confirms price trend ────────────────────────────
     obv_slope = calc_obv_slope(close, vol)
     if obv_slope > 0:
         score += 1; votes.append(("OBV", +1, f"OBV slope {obv_slope:+.0f} — volume trending up"))
@@ -655,43 +654,44 @@ def analyze_pair(pair: str, candles: list,
     else:
         votes.append(("OBV", 0, "OBV slope flat"))
 
-    # 10. Volume spike (amplifies the dominant trend)
-    vol_r = volume_ratio(vol)
-    if vol_r >= 1.5:
-        amp = 1 if score > 0 else (-1 if score < 0 else 0)
-        score += amp
-        votes.append(("Volume", amp,
-                      f"volume {vol_r:.2f}× avg — amplifies {'bullish' if amp > 0 else 'bearish' if amp < 0 else 'neutral'} bias"))
-
-    # 11. Fear & Greed
-    if fear_greed_score != 0:
-        score += fear_greed_score
-        votes.append(("Fear/Greed", fear_greed_score, fear_greed_reason))
+    # ── 9. Fear & Greed (crypto-specific — skip for commodities) ─────────────
+    # F&G measures crypto market sentiment only. Gold/Silver are safe-haven
+    # assets with different sentiment drivers — applying F&G to them is wrong.
+    if not is_commodity:
+        if fear_greed_score != 0:
+            score += fear_greed_score
+            votes.append(("Fear/Greed", fear_greed_score, fear_greed_reason))
+        else:
+            votes.append(("Fear/Greed", 0, fear_greed_reason))
     else:
-        votes.append(("Fear/Greed", 0, fear_greed_reason))
+        votes.append(("Fear/Greed", 0, "Fear/Greed: skipped for commodity pair"))
 
-    # 12. Global market cap change
-    if market_cap_score != 0:
-        score += market_cap_score
-        votes.append(("Mkt Cap", market_cap_score, market_cap_reason))
+    # ── 10. Global market cap change (crypto-specific — skip for commodities) ─
+    # Crypto market cap is irrelevant to gold/silver prices.
+    if not is_commodity:
+        if market_cap_score != 0:
+            score += market_cap_score
+            votes.append(("Mkt Cap", market_cap_score, market_cap_reason))
+        else:
+            votes.append(("Mkt Cap", 0, market_cap_reason or "Mkt cap: neutral"))
     else:
-        votes.append(("Mkt Cap", 0, market_cap_reason or "Mkt cap: neutral"))
+        votes.append(("Mkt Cap", 0, "Mkt cap: skipped for commodity pair"))
 
-    # 13. Funding rate — derivatives positioning
+    # ── 11. Funding rate — derivatives positioning ────────────────────────────
     if funding_score != 0:
         score += funding_score
         votes.append(("Funding", funding_score, funding_reason))
     else:
         votes.append(("Funding", 0, funding_reason or "Funding rate: neutral"))
 
-    # 14. Long/Short ratio — derivatives positioning
+    # ── 12. Long/Short ratio — derivatives positioning ────────────────────────
     if lsr_score != 0:
         score += lsr_score
         votes.append(("L/S Ratio", lsr_score, lsr_reason))
     else:
         votes.append(("L/S Ratio", 0, lsr_reason or "L/S ratio: balanced"))
 
-    # 15. Coin-specific news
+    # ── 13. Coin-specific news ────────────────────────────────────────────────
     coin_sym = pair.replace("USDT", "")
     news_score, news_reason = get_news_sentiment(coin_sym)
     if news_score != 0:
@@ -700,12 +700,23 @@ def analyze_pair(pair: str, candles: list,
     else:
         votes.append(("News", 0, news_reason))
 
-    # 16. Macro events — Fed, interest rates, wars, geopolitics
+    # ── 14. Macro events — Fed, rates, wars, geopolitics ─────────────────────
+    # Macro is valid for ALL pairs (crypto + gold/silver respond to rate decisions)
     if macro_score != 0:
         score += macro_score
         votes.append(("Macro", macro_score, macro_reason))
     else:
         votes.append(("Macro", 0, macro_reason or "Macro: neutral"))
+
+    # ── 15. Volume spike — amplifies FINAL dominant trend (must be last) ──────
+    # Placed after all other votes so it amplifies the true net direction,
+    # not a partial mid-calculation score.
+    vol_r = volume_ratio(vol)
+    if vol_r >= 1.5:
+        amp = 1 if score > 0 else (-1 if score < 0 else 0)
+        score += amp
+        votes.append(("Volume", amp,
+                      f"volume {vol_r:.2f}× avg — amplifies {'bullish' if amp > 0 else 'bearish' if amp < 0 else 'neutral'} bias"))
 
     # ── Decision ─────────────────────────────────────────────────────────────
     base_result = {"score": score, "price": price, "atr": round(calc_atr(high, low, close), 6),
