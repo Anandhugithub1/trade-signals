@@ -225,6 +225,11 @@ class _PriceLevelsCard extends StatelessWidget {
               style: TextStyle(
                   color: c.t1, fontSize: 15, fontWeight: FontWeight.w700)),
           const SizedBox(height: 12),
+          // Live price row — shows current market price + unrealised P&L
+          if (signal.latestPrice != null && signal.isPending) ...[
+            _LivePriceRow(signal: signal),
+            Divider(height: 1, color: c.border),
+          ],
           _PriceRow(label: 'Entry Price', value: fmtPrice(signal.entry), color: c.t1),
           Divider(height: 1, color: c.border),
           _PriceRow(label: 'Stop Loss', value: fmtPrice(signal.stopLoss), color: c.short),
@@ -272,6 +277,63 @@ class _PriceRow extends StatelessWidget {
           Text(label, style: TextStyle(color: c.t2, fontSize: 14)),
           Text(value,
               style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w700)),
+        ],
+      ),
+    );
+  }
+}
+
+class _LivePriceRow extends StatelessWidget {
+  final TradeSignal signal;
+  const _LivePriceRow({required this.signal});
+
+  @override
+  Widget build(BuildContext context) {
+    final c    = context.colors;
+    final pnl  = signal.livePnlPercent;
+    final isPos = (pnl ?? 0) >= 0;
+    final pnlColor = pnl == null
+        ? c.t2
+        : isPos ? c.long : c.short;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 7, height: 7,
+                decoration: BoxDecoration(color: c.long, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 6),
+              Text('Live Price',
+                  style: TextStyle(color: c.t2, fontSize: 14)),
+            ],
+          ),
+          Row(
+            children: [
+              Text(fmtPrice(signal.latestPrice!),
+                  style: TextStyle(
+                      color: c.t1, fontSize: 14, fontWeight: FontWeight.w700)),
+              if (pnl != null) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: pnlColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  child: Text(
+                    '${pnl >= 0 ? '+' : ''}${pnl.toStringAsFixed(2)}%',
+                    style: TextStyle(
+                        color: pnlColor, fontSize: 11, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ],
+          ),
         ],
       ),
     );

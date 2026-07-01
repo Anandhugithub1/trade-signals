@@ -10,6 +10,7 @@ class TradeSignal {
   final DateTime? expiresAt;
   final SignalResult result;
   final double? closePrice;
+  final double? latestPrice;  // updated every hour by check_signals
 
   const TradeSignal({
     required this.id,
@@ -23,6 +24,7 @@ class TradeSignal {
     this.expiresAt,
     this.result = SignalResult.pending,
     this.closePrice,
+    this.latestPrice,
   });
 
   factory TradeSignal.fromJson(Map<String, dynamic> j) {
@@ -38,6 +40,7 @@ class TradeSignal {
       expiresAt: j['expires_at'] != null ? DateTime.parse(j['expires_at'] as String) : null,
       result: _resultFromString(j['result'] as String? ?? 'pending'),
       closePrice: j['close_price'] != null ? (j['close_price'] as num).toDouble() : null,
+      latestPrice: j['latest_price'] != null ? (j['latest_price'] as num).toDouble() : null,
     );
   }
 
@@ -100,6 +103,14 @@ class TradeSignal {
   double? get pnlPercent {
     if (closePrice == null) return null;
     final diff = closePrice! - entry;
+    final directedDiff = direction == SignalDirection.long ? diff : -diff;
+    return (directedDiff / entry) * 100;
+  }
+
+  // Live unrealised P&L % using latest_price (pending signals only)
+  double? get livePnlPercent {
+    if (latestPrice == null || !isPending) return null;
+    final diff = latestPrice! - entry;
     final directedDiff = direction == SignalDirection.long ? diff : -diff;
     return (directedDiff / entry) * 100;
   }

@@ -364,6 +364,15 @@ def handler(event=None, context=None):
 
             log_result(result, close_price, diag, direction)
 
+            # Always update latest_price — shows current price even for pending signals
+            latest = diag.get("last_close")
+            if latest is not None:
+                _retry(
+                    lambda lp=latest: supabase.table("trade_signals")
+                        .update({"latest_price": lp}).eq("id", sid).execute(),
+                    label=f"latest_price {pair}",
+                )
+
             if result:
                 update_payload = {"result": result}
                 if close_price is not None:
@@ -373,9 +382,10 @@ def handler(event=None, context=None):
                         .update(update_payload).eq("id", sid).execute(),
                     label=f"DB update {pair}",
                 )
-                print(f"  Supabase updated  -> result={result}")
+                print(f"  Supabase updated  -> result={result}  latest_price=${latest:,.4f}" if latest else f"  Supabase updated  -> result={result}")
                 stats["updated"] += 1
             else:
+                print(f"  latest_price updated -> ${latest:,.4f}" if latest else "  latest_price: unavailable")
                 stats["still_pending"] += 1
 
         except requests.HTTPError as exc:
