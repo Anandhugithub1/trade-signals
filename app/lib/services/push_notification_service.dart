@@ -77,13 +77,20 @@ class PushNotificationService {
   static Future<void> _saveToken(String token) async {
     final platform = kIsWeb ? 'web' : (Platform.isIOS ? 'ios' : 'android');
     try {
-      await _db.from('notification_tokens').upsert(
+      final res = await _db.from('notification_tokens').upsert(
         {'device_token': token, 'platform': platform, 'is_enabled': true},
         onConflict: 'device_token',
       );
-      debugPrint('[PushNotification] token registered ($platform)');
+      debugPrint('[PushNotification] ✓ token saved ($platform)  token=${token.substring(0, 20)}...');
+    } on PostgrestException catch (e) {
+      // Common causes:
+      // 42P01 = table doesn't exist (run the Supabase setup SQL)
+      // 42501 = RLS blocked insert (add policy: allow anon insert)
+      debugPrint('[PushNotification] ✗ Supabase error ${e.code}: ${e.message}');
+      debugPrint('[PushNotification]   → If 42P01: run CREATE TABLE notification_tokens ...');
+      debugPrint('[PushNotification]   → If 42501: add RLS policy allowing anon INSERT');
     } catch (e) {
-      debugPrint('[PushNotification] token save failed: $e');
+      debugPrint('[PushNotification] ✗ token save failed: $e');
     }
   }
 
