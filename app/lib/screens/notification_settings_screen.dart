@@ -99,7 +99,7 @@ class _NotificationSettingsScreenState
                         : Switch.adaptive(
                             value: _enabled && granted,
                             onChanged: granted ? _toggle : null,
-                            activeColor: c.accent,
+                            activeTrackColor: c.accent,
                           ),
                   ],
                 ),

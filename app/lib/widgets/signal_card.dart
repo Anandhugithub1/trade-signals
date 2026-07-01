@@ -97,8 +97,12 @@ class _CompactBody extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 2),
-              Text('Entry  ${fmtPrice(signal.entry)}',
-                  style: TextStyle(color: c.t2, fontSize: 12)),
+              // Show live price if available, otherwise show entry
+              if (signal.latestPrice != null && signal.isPending)
+                _LivePriceLine(signal: signal)
+              else
+                Text('Entry  ${fmtPrice(signal.entry)}',
+                    style: TextStyle(color: c.t2, fontSize: 12)),
             ],
           ),
         ),
@@ -157,6 +161,11 @@ class _FullBody extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 12),
+        // Live price banner — shown above price tiles for pending signals
+        if (signal.latestPrice != null && signal.isPending) ...[
+          _LivePriceBanner(signal: signal),
+          const SizedBox(height: 8),
+        ],
         Row(
           children: [
             _PriceTile(label: 'ENTRY', value: fmtPrice(signal.entry), valueColor: c.t1),
@@ -386,6 +395,93 @@ class _ExpiryRow extends StatelessWidget {
           style: TextStyle(color: color, fontSize: 11),
         ),
       ],
+    );
+  }
+}
+
+/// One-line subtitle in compact card: "Live $68,100  +1.02%"
+class _LivePriceLine extends StatelessWidget {
+  final TradeSignal signal;
+  const _LivePriceLine({required this.signal});
+
+  @override
+  Widget build(BuildContext context) {
+    final c    = context.colors;
+    final pnl  = signal.livePnlPercent;
+    final isUp = (pnl ?? 0) >= 0;
+    final pnlColor = pnl == null ? c.t2 : isUp ? c.long : c.short;
+    return Row(
+      children: [
+        Text('Live  ${fmtPrice(signal.latestPrice!)}',
+            style: TextStyle(color: c.t1, fontSize: 12, fontWeight: FontWeight.w600)),
+        if (pnl != null) ...[
+          const SizedBox(width: 5),
+          Text(
+            '${isUp ? '+' : ''}${pnl.toStringAsFixed(2)}%',
+            style: TextStyle(color: pnlColor, fontSize: 11, fontWeight: FontWeight.w700),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Full-width banner in the full card: shows live price + P&L bar
+class _LivePriceBanner extends StatelessWidget {
+  final TradeSignal signal;
+  const _LivePriceBanner({required this.signal});
+
+  @override
+  Widget build(BuildContext context) {
+    final c     = context.colors;
+    final pnl   = signal.livePnlPercent;
+    final isUp  = (pnl ?? 0) >= 0;
+    final pnlColor = pnl == null ? c.t2 : isUp ? c.long : c.short;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: pnlColor.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: pnlColor.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 6, height: 6,
+                decoration: BoxDecoration(color: pnlColor, shape: BoxShape.circle),
+              ),
+              const SizedBox(width: 6),
+              Text('Live Price',
+                  style: TextStyle(color: c.t2, fontSize: 11, fontWeight: FontWeight.w600)),
+            ],
+          ),
+          Row(
+            children: [
+              Text(fmtPrice(signal.latestPrice!),
+                  style: TextStyle(color: c.t1, fontSize: 13, fontWeight: FontWeight.w800)),
+              if (pnl != null) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: pnlColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                  child: Text(
+                    '${isUp ? '+' : ''}${pnl.toStringAsFixed(2)}%',
+                    style: TextStyle(
+                        color: pnlColor, fontSize: 11, fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
     );
   }
 }
