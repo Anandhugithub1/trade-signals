@@ -447,6 +447,10 @@ def handler(event=None, context=None):
     signals = response.data
     print(f"[check_signals] {len(signals)} pending signal(s) found")
 
+    if not signals:
+        print(f"[check_signals] No pending signals — nothing to do. Exiting.\n")
+        return {"statusCode": 200, "body": json.dumps({"skipped": True, "reason": "no_pending_signals"})}
+
     stats = {"checked": len(signals), "updated": 0, "still_pending": 0, "errors": []}
 
     for signal in signals:
