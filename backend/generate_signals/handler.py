@@ -156,7 +156,7 @@ TOP_PAIRS = [
 MIN_BULL_SCORE       = 4    # net bullish votes required for LONG  (raised: 17 indicators now)
 MIN_BEAR_SCORE       = 4    # net bearish votes required for SHORT
 MIN_SIGNAL_CONFIDENCE = 72  # signals below this % are discarded (low conviction)
-MAX_SIGNALS          = 5    # insert at most this many signals per day
+MAX_SIGNALS          = 4    # insert at most this many signals per day
 ATR_SL_MULT          = 1.2  # SL = entry ± (ATR_SL_MULT × ATR)
 ATR_TP_MULT          = 1.8  # TP = entry ± (ATR_TP_MULT × ATR)
 
