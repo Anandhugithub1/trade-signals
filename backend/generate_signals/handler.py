@@ -1,5 +1,5 @@
 """
-generate_signals — creates trade signals for the top 10 crypto pairs
+generate_signals — creates trade signals for the top 15 crypto pairs
 by market cap using technical analysis + multi-source sentiment.
 
 ═══════════════════════════════════════════════════════════════════
@@ -141,10 +141,12 @@ def _retry(fn, retries: int = 3, backoff: float = 1.5, label: str = ""):
 
     raise last_exc
 
-# Top 10 by market cap (Binance perpetual pairs)
+# Top 15 by market cap — excludes stablecoins (USDT/USDC/BUSD)
+# Pairs available on Binance/Bybit/OKX perpetual futures
 TOP_PAIRS = [
-    "BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT",
-    "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "DOTUSDT", "LINKUSDT",
+    "BTCUSDT",  "ETHUSDT",  "BNBUSDT",  "SOLUSDT",  "XRPUSDT",   # 1–5
+    "ADAUSDT",  "DOGEUSDT", "TRXUSDT",  "AVAXUSDT", "TONUSDT",    # 6–10
+    "DOTUSDT",  "LINKUSDT", "LTCUSDT",  "BCHUSDT",  "UNIUSDT",    # 11–15
 ]
 
 MIN_BULL_SCORE       = 4    # net bullish votes required for LONG  (raised: 17 indicators now)
