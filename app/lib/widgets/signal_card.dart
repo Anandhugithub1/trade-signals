@@ -412,7 +412,7 @@ class _LivePriceLine extends StatelessWidget {
     final pnlColor = pnl == null ? c.t2 : isUp ? c.long : c.short;
     return Row(
       children: [
-        Text('Live  ${fmtPrice(signal.latestPrice!)}',
+        Text('Last  ${fmtPrice(signal.latestPrice!)}',
             style: TextStyle(color: c.t1, fontSize: 12, fontWeight: FontWeight.w600)),
         if (pnl != null) ...[
           const SizedBox(width: 5),
@@ -455,7 +455,7 @@ class _LivePriceBanner extends StatelessWidget {
                 decoration: BoxDecoration(color: pnlColor, shape: BoxShape.circle),
               ),
               const SizedBox(width: 6),
-              Text('Live Price',
+              Text('Last Updated',
                   style: TextStyle(color: c.t2, fontSize: 11, fontWeight: FontWeight.w600)),
             ],
           ),

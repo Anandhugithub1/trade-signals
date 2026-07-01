@@ -308,7 +308,7 @@ class _LivePriceRow extends StatelessWidget {
                 decoration: BoxDecoration(color: c.long, shape: BoxShape.circle),
               ),
               const SizedBox(width: 6),
-              Text('Live Price',
+              Text('Last Updated Price',
                   style: TextStyle(color: c.t2, fontSize: 14)),
             ],
           ),

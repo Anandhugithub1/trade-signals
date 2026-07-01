@@ -40,7 +40,7 @@ by market cap using technical analysis + multi-source sentiment.
   SHORT signal when net score <= -MIN_BEAR_SCORE (4)
   Confidence = score ratio → 60–95 %
 
-Trigger: 3× per day via GitHub Actions cron.
+Trigger: every 4h via GitHub Actions cron. Max 5 signals/day.
 """
 
 import json
@@ -150,7 +150,7 @@ TOP_PAIRS = [
 MIN_BULL_SCORE       = 4    # net bullish votes required for LONG  (raised: 17 indicators now)
 MIN_BEAR_SCORE       = 4    # net bearish votes required for SHORT
 MIN_SIGNAL_CONFIDENCE = 72  # signals below this % are discarded (low conviction)
-MAX_SIGNALS          = 3    # insert at most this many signals per run
+MAX_SIGNALS          = 5    # insert at most this many signals per day
 ATR_SL_MULT          = 1.2  # SL = entry ± (ATR_SL_MULT × ATR)
 ATR_TP_MULT          = 1.8  # TP = entry ± (ATR_TP_MULT × ATR)
 
