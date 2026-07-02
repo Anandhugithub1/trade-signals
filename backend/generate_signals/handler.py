@@ -398,6 +398,56 @@ def fetch_candles(symbol: str) -> list:
     return list(reversed(r.json()["data"]))   # OKX newest-first → reverse
 
 
+def get_live_price(symbol: str) -> float | None:
+    """
+    Fetch the real-time last-traded price from ticker APIs.
+    Used as the signal entry price instead of the stale candle close,
+    which can lag by up to 1h when the candle just opened.
+
+    Same provider fallback chain as fetch_candles:
+      1. Binance Futures  (geo-blocked in some regions)
+      2. Bybit Futures    (blocked on some cloud IPs)
+      3. OKX              (US-accessible, always works from GitHub Actions)
+    Returns None if all providers fail — caller falls back to candle close.
+    """
+    # 1. Binance Futures ticker
+    try:
+        r = requests.get(
+            "https://fapi.binance.com/fapi/v1/ticker/price",
+            params={"symbol": symbol}, headers=_HEADERS, timeout=6,
+        )
+        if r.status_code == 200:
+            return float(r.json()["price"])
+    except Exception:
+        pass
+
+    # 2. Bybit Futures ticker
+    try:
+        r = requests.get(
+            "https://api.bybit.com/v5/market/tickers",
+            params={"category": "linear", "symbol": symbol}, headers=_HEADERS, timeout=6,
+        )
+        if r.status_code == 200:
+            items = r.json().get("result", {}).get("list", [])
+            if items:
+                return float(items[0]["lastPrice"])
+    except Exception:
+        pass
+
+    # 3. OKX ticker
+    try:
+        r = requests.get(
+            "https://www.okx.com/api/v5/market/ticker",
+            params={"instId": _okx_symbol(symbol) + "-SWAP"}, headers=_HEADERS, timeout=6,
+        )
+        if r.status_code == 200 and r.json().get("data"):
+            return float(r.json()["data"][0]["last"])
+    except Exception:
+        pass
+
+    return None   # all providers failed — caller uses candle close
+
+
 # ── external sentiment ────────────────────────────────────────────────────────
 
 def get_fear_greed() -> tuple[int, int, str]:
@@ -617,8 +667,16 @@ def analyze_pair(pair: str, candles: list,
     is_commodity = pair in ("XAUUSDT", "XAGUSDT")
     atr_val      = round(calc_atr(high, low, close), 6)
 
+    # Use the real-time ticker price as entry — more accurate than the candle close
+    # which can lag by up to 1h. Falls back to close[-1] if ticker fetch fails.
+    live = get_live_price(pair)
+    entry_price = live if live is not None else price
+    if live is not None and abs(live - price) / price > 0.001:
+        print(f"  [LIVE] {pair} live=${live:,.4f}  candle_close=${price:,.4f}  "
+              f"(diff {(live-price)/price*100:+.2f}%)")
+
     def no_signal(reason: str) -> dict:
-        return {"score": score, "price": price, "atr": atr_val, "adx": round(adx, 1),
+        return {"score": score, "price": entry_price, "atr": atr_val, "adx": round(adx, 1),
                 "votes": votes + [("Regime", 0, reason)], "has_signal": False}
 
     # ── REGIME GATE — momentum only trades confirmed trends (ADX + EMA stack) ──
@@ -751,24 +809,24 @@ def analyze_pair(pair: str, candles: list,
     active   = len([v for v in votes if v[1] != 0]) or 1
     strength = max(60, min(95, int(60 + min(abs(score) / active, 1.0) * 35)))
 
-    # ── SL / TP for 1h momentum (fixed 3.5% target, RR floor enforced) ────────
-    tp_dist = price * TARGET_TP_PCT
-    sl_dist = min(ATR_SL_MULT * atr_val, price * MAX_SL_PCT)
+    # ── SL / TP — sized off the LIVE entry price ─────────────────────────────
+    tp_dist = entry_price * TARGET_TP_PCT
+    sl_dist = min(ATR_SL_MULT * atr_val, entry_price * MAX_SL_PCT)
     if sl_dist <= 0:
-        sl_dist = price * 0.01
-    if tp_dist / sl_dist < MIN_RR:        # tighten SL until reward:risk >= 1.5
+        sl_dist = entry_price * 0.01
+    if tp_dist / sl_dist < MIN_RR:
         sl_dist = tp_dist / MIN_RR
 
     if direction == "long":
-        sl = round(price - sl_dist, 6)
-        tp = round(price + tp_dist, 6)
+        sl = round(entry_price - sl_dist, 6)
+        tp = round(entry_price + tp_dist, 6)
     else:
-        sl = round(price + sl_dist, 6)
-        tp = round(price - tp_dist, 6)
+        sl = round(entry_price + sl_dist, 6)
+        tp = round(entry_price - tp_dist, 6)
 
-    # Risk : Reward ratio  (stored as the reward side of "1 : X")
-    risk     = abs(price - sl)
-    reward   = abs(tp - price)
+    # Risk : Reward ratio
+    risk     = abs(entry_price - sl)
+    reward   = abs(tp - entry_price)
     rr_ratio = round(reward / risk, 2) if risk > 0 else 0.0
 
     # Expiry window: 2–7 days based on signal strength + RR quality
@@ -784,7 +842,7 @@ def analyze_pair(pair: str, candles: list,
             "id":          str(uuid.uuid4()),
             "pair":        pair,
             "direction":   direction,
-            "entry":       round(float(price), 6),
+            "entry":       round(float(entry_price), 6),
             "stop_loss":   sl,
             "take_profit": tp,
             "confidence":  strength,     # DB column kept as 'confidence'; value = signal strength
@@ -796,7 +854,7 @@ def analyze_pair(pair: str, candles: list,
             "votes_json":  votes_json,
         },
         "score":       score,
-        "price":       price,
+        "price":       entry_price,
         "atr":         round(atr_val, 6),
         "adx":         round(adx, 1),
         "rr_ratio":    rr_ratio,
