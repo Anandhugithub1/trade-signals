@@ -324,18 +324,18 @@ def calc_expiry_days(confidence: int, rr_ratio: float) -> int:
     Confidence 60-95 and RR 1.0-3.0 each contribute to the window:
       conf_factor  maps 60→0.0, 95→1.0
       rr_factor    maps 1.0→0.0, 3.0→1.0
-    Combined (60% conf weight, 40% RR weight) → scales 2–7 days.
+    Combined (60% conf weight, 40% RR weight) → scales 3–4 days.
 
     Examples:
-      confidence=65, RR=1.5  →  ~3 days
-      confidence=80, RR=2.0  →  ~5 days
-      confidence=90, RR=2.5  →  ~7 days
+      confidence=65, RR=1.5  →  3 days
+      confidence=80, RR=2.0  →  3–4 days
+      confidence=90, RR=2.5  →  4 days
     """
     conf_factor = min((confidence - 60) / 35.0, 1.0)
     rr_factor   = min(max((rr_ratio - 1.0) / 2.0, 0.0), 1.0)
     factor      = conf_factor * 0.6 + rr_factor * 0.4
-    days        = round(2 + factor * 5)            # 2 → 7
-    return max(2, min(7, int(days)))
+    days        = round(3 + factor * 1)            # 3 → 4
+    return max(3, min(4, int(days)))
 
 
 def volume_ratio(vol: np.ndarray, period: int = 20) -> float:

@@ -71,7 +71,7 @@ def _retry(fn, retries: int = 3, backoff: float = 1.5, label: str = ""):
         print(f"  [RETRY]{lbl} attempt {attempt + 1}/{retries} failed — retrying in {wait:.1f}s")
         time.sleep(wait)
     raise last_exc
-SIGNAL_EXPIRY_DAYS = 14
+SIGNAL_EXPIRY_DAYS = 4    # fallback for signals without expires_at (max 4 days)
 HOUR_MS            = 3_600_000
 SEP                = "-" * 60
 

@@ -174,7 +174,7 @@ final List<TradeSignal> _allSignals = [
     takeProfit: 71000.00,
     confidence: 87,
     timestamp: DateTime.now().subtract(const Duration(minutes: 12)),
-    expiresAt: DateTime.now().add(const Duration(days: 6, hours: 12)),
+    expiresAt: DateTime.now().add(const Duration(days: 3, hours: 12)),
   ),
   TradeSignal(
     id: 'a2',
@@ -196,7 +196,7 @@ final List<TradeSignal> _allSignals = [
     takeProfit: 198.00,
     confidence: 82,
     timestamp: DateTime.now().subtract(const Duration(hours: 3)),
-    expiresAt: DateTime.now().add(const Duration(days: 5)),
+    expiresAt: DateTime.now().add(const Duration(days: 3)),
   ),
   TradeSignal(
     id: 'a4',
