@@ -3,7 +3,8 @@ name: Generate Signals
 on:
   schedule:
     - cron: '0 */4 * * *'   # every 4 hours — matches 4h candle timeframe
-  # Each run checks today's count and only fills up to the 3-signal daily cap.
+    - cron: '0 13 * * *'    # ~8:30am ET (splits EDT/EST) — 1h before US market open
+  # Each run checks today's count and only fills up to the 4-signal daily cap.
   workflow_dispatch:          # manual trigger from GitHub Actions tab
 
 jobs:
