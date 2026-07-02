@@ -62,6 +62,15 @@ export default function DashboardPage() {
   const pairs = pairStats(signals)
   const recent = signals.slice(0, 8)
 
+  // $1000/trade P&L — fixed 3.5% TP, 2% SL
+  const TRADE_SIZE = 1000
+  const WIN_PCT    = 3.5
+  const RISK_PCT   = 2.0
+  const grossProfit   = stats.wins   * (TRADE_SIZE * WIN_PCT  / 100)
+  const grossLoss     = stats.losses * (TRADE_SIZE * RISK_PCT / 100)
+  const netPnl        = grossProfit - grossLoss
+  const isProfit      = netPnl >= 0
+
   return (
     <div className="p-8 space-y-6">
       <div>
@@ -87,8 +96,50 @@ export default function DashboardPage() {
         <StatCard label="Wins" value={stats.wins} loading={loading} color="green" />
         <StatCard label="Losses" value={stats.losses} loading={loading} color="red" />
         <StatCard label="Pending" value={stats.pending} loading={loading} color="amber" />
-        <StatCard label="Avg Confidence" value={`${stats.avgConf.toFixed(0)}%`} loading={loading} />
+        <StatCard label="Avg Strength" value={`${stats.avgConf.toFixed(0)}%`} loading={loading} />
       </div>
+
+      {/* $1000/trade performance card */}
+      {!loading && (stats.wins + stats.losses) > 0 && (
+        <div className="bg-[#1a1a24] border border-[#2a2a3a] rounded-xl overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-3.5 border-b border-[#2a2a3a]">
+            <div>
+              <h2 className="text-sm font-semibold text-white">$1,000 / Trade Performance</h2>
+              <p className="text-[11px] text-[#475569] mt-0.5">
+                Hypothetical P&L · {WIN_PCT}% TP · {RISK_PCT}% SL · {stats.wins + stats.losses} closed trades
+              </p>
+            </div>
+            <span className={`text-xs font-bold px-2.5 py-1 rounded-lg ${isProfit ? 'bg-[#22c55e]/10 text-[#22c55e]' : 'bg-[#ef4444]/10 text-[#ef4444]'}`}>
+              {isProfit ? 'PROFITABLE' : 'IN LOSS'}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-[#2a2a3a]">
+            {[
+              { label: 'Net P&L',      value: `${isProfit ? '+' : '−'}$${Math.abs(netPnl).toFixed(0)}`,   color: isProfit ? '#22c55e' : '#ef4444' },
+              { label: 'Gross Profit', value: `+$${grossProfit.toFixed(0)}`,  color: '#22c55e' },
+              { label: 'Gross Loss',   value: `-$${grossLoss.toFixed(0)}`,    color: '#ef4444' },
+              { label: 'Per Trade',    value: `${isProfit ? '+' : '−'}$${Math.abs(netPnl / (stats.wins + stats.losses)).toFixed(0)} avg`, color: isProfit ? '#22c55e' : '#ef4444' },
+            ].map(({ label, value, color }) => (
+              <div key={label} className="px-5 py-4">
+                <p className="text-[10px] text-[#475569] uppercase tracking-widest font-semibold">{label}</p>
+                <p className="text-xl font-black mt-1" style={{ color }}>{value}</p>
+              </div>
+            ))}
+          </div>
+          {/* Visual bar */}
+          <div className="px-5 pb-4 pt-1">
+            <div className="h-2 bg-[#2a2a3a] rounded-full overflow-hidden flex">
+              <div className="h-full bg-[#22c55e] rounded-l-full transition-all"
+                style={{ width: `${grossProfit + grossLoss > 0 ? (grossProfit / (grossProfit + grossLoss)) * 100 : 50}%` }} />
+              <div className="h-full bg-[#ef4444] rounded-r-full transition-all"
+                style={{ width: `${grossProfit + grossLoss > 0 ? (grossLoss / (grossProfit + grossLoss)) * 100 : 50}%` }} />
+            </div>
+            <p className="text-[10px] text-[#475569] mt-1.5 text-center">
+              Each win earns <span className="text-[#22c55e] font-semibold">${(TRADE_SIZE * WIN_PCT / 100).toFixed(0)}</span> · each loss costs <span className="text-[#ef4444] font-semibold">${(TRADE_SIZE * RISK_PCT / 100).toFixed(0)}</span>
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Pair breakdown */}
