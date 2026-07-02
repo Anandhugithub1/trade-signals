@@ -319,7 +319,7 @@ class _MenuCard extends StatelessWidget {
       (Icons.notifications_outlined,  'Notifications',   'Push alerts for new signals',  c.accent, 'notifications'),
       (Icons.warning_amber_rounded,   'Risk Disclaimer', 'Read before trading',           const Color(0xFFF59E0B), '/disclaimer/info'),
       (Icons.help_outline_rounded,    'Help & Support',  'FAQs and feedback',             c.long, null),
-      (Icons.info_outline_rounded,    'About',           'TradePilot v1.0.0 · MVP',       c.t2, null),
+      (Icons.info_outline_rounded,    'About',           'Zenviq v1.0.0 · MVP',       c.t2, null),
     ];
 
     return Container(

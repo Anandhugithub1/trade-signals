@@ -30,16 +30,16 @@ void main() async {
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
   ));
-  runApp(const TradePilotApp());
+  runApp(const ZenviqApp());
 }
 
-class TradePilotApp extends StatelessWidget {
-  const TradePilotApp({super.key});
+class ZenviqApp extends StatelessWidget {
+  const ZenviqApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'TradePilot',
+      title: 'Zenviq',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
       darkTheme: AppTheme.dark,

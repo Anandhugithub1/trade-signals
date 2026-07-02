@@ -6,11 +6,11 @@
 // tree, read text, and verify that the values of widget properties are correct.
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:trade_pilot/main.dart';
+import 'package:zenviq/main.dart';
 
 void main() {
   testWidgets('App smoke test', (WidgetTester tester) async {
-    await tester.pumpWidget(const TradePilotApp());
-    expect(find.text('TradePilot'), findsWidgets);
+    await tester.pumpWidget(const ZenviqApp());
+    expect(find.text('Zenviq'), findsWidgets);
   });
 }

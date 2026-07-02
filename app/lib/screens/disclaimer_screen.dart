@@ -131,7 +131,7 @@ class _DisclaimerScreenState extends State<DisclaimerScreen>
                       iconBg: const Color(0xFF1E2A3D),
                       title: 'Not Financial or Legal Advice',
                       body:
-                          'TradePilot signals are provided for informational and educational purposes only. They do not constitute financial, investment, legal, or tax advice. Always consult a qualified financial advisor before making investment decisions.',
+                          'Zenviq signals are provided for informational and educational purposes only. They do not constitute financial, investment, legal, or tax advice. Always consult a qualified financial advisor before making investment decisions.',
                     ),
                     const SizedBox(height: 28),
                     _buildResponsibilityBanner(c),
@@ -181,7 +181,7 @@ class _DisclaimerScreenState extends State<DisclaimerScreen>
         ),
         const SizedBox(height: 8),
         Text(
-          'Please read carefully before using TradePilot signals. Trading involves substantial risk of loss.',
+          'Please read carefully before using Zenviq signals. Trading involves substantial risk of loss.',
           style: TextStyle(color: c.t2, fontSize: 14, height: 1.5),
         ),
       ],

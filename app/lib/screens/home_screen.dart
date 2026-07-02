@@ -181,17 +181,18 @@ class _Header extends StatelessWidget {
           children: [
             Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                    color: c.accent.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.asset(
+                    'assets/images/logo.png',
+                    width: 28,
+                    height: 28,
+                    fit: BoxFit.cover,
                   ),
-                  child: Icon(Icons.show_chart_rounded, color: c.accent, size: 18),
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  'TradePilot',
+                  'Zenviq',
                   style: TextStyle(
                     color: c.t1,
                     fontSize: 22,

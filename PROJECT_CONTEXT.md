@@ -1,6 +1,7 @@
-# TradePilot — Project Context
+# Zenviq — Project Context
 
-Last updated: 2026-07-02
+Last updated: 2026-07-03 (app renamed TradePilot → Zenviq; Flutter package renamed
+`trade_pilot` → `zenviq`; logo now at `app/assets/images/logo.png`)
 
 ## What this is
 

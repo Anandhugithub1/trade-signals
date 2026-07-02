@@ -147,7 +147,7 @@ class _SplashScreenState extends State<SplashScreen>
                         ),
                       ),
 
-                      // Logo box with pulsing glow
+                      // Logo with pulsing glow
                       FadeTransition(
                         opacity: logoFade,
                         child: ScaleTransition(
@@ -158,16 +158,6 @@ class _SplashScreenState extends State<SplashScreen>
                               width: 100,
                               height: 100,
                               decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: [
-                                    Color(0xFF1E3A8A),
-                                    Color(0xFF2563EB),
-                                    Color(0xFF60A5FA),
-                                  ],
-                                  stops: [0.0, 0.55, 1.0],
-                                ),
                                 borderRadius: BorderRadius.circular(30),
                                 boxShadow: [
                                   BoxShadow(
@@ -181,10 +171,14 @@ class _SplashScreenState extends State<SplashScreen>
                               ),
                               child: child,
                             ),
-                            child: const Icon(
-                              Icons.show_chart_rounded,
-                              color: Colors.white,
-                              size: 52,
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(30),
+                              child: Image.asset(
+                                'assets/images/logo.png',
+                                width: 100,
+                                height: 100,
+                                fit: BoxFit.cover,
+                              ),
                             ),
                           ),
                         ),
@@ -208,7 +202,7 @@ class _SplashScreenState extends State<SplashScreen>
                             colors: [Color(0xFFEEF2FF), Color(0xFF93C5FD)],
                           ).createShader(bounds),
                           child: const Text(
-                            'TradePilot',
+                            'Zenviq',
                             style: TextStyle(
                               color: Colors.white,
                               fontSize: 40,

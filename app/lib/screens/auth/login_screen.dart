@@ -133,11 +133,6 @@ class _LoginScreenState extends State<LoginScreen>
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [c.accent, c.accent.withValues(alpha: 0.75)],
-            ),
             borderRadius: BorderRadius.circular(13),
             boxShadow: [
               BoxShadow(
@@ -147,11 +142,14 @@ class _LoginScreenState extends State<LoginScreen>
               ),
             ],
           ),
-          child: const Icon(Icons.show_chart_rounded, color: Colors.white, size: 24),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(13),
+            child: Image.asset('assets/images/logo.png', fit: BoxFit.cover),
+          ),
         ),
         const SizedBox(width: 10),
         Text(
-          'TradePilot',
+          'Zenviq',
           style: TextStyle(
             color: c.t1,
             fontSize: 20,

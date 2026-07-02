@@ -212,7 +212,7 @@ class _RegisterScreenState extends State<RegisterScreen>
         ),
         const SizedBox(height: 6),
         Text(
-          'Join thousands of traders using TradePilot',
+          'Join thousands of traders using Zenviq',
           style: TextStyle(color: c.t2, fontSize: 15),
         ),
       ],
