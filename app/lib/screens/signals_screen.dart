@@ -5,6 +5,7 @@ import '../theme/app_colors.dart';
 import '../widgets/signal_card.dart';
 import '../widgets/error_view.dart';
 import '../widgets/disclaimer_banner.dart';
+import '../widgets/shimmer.dart';
 import 'signal_detail_screen.dart';
 
 class SignalsScreen extends StatefulWidget {
@@ -218,7 +219,18 @@ class _SignalsScreenState extends State<SignalsScreen> {
 
   Widget _buildList(AppColors c) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        physics: const NeverScrollableScrollPhysics(),
+        children: List.generate(
+          6,
+          (_) => const Padding(
+            padding: EdgeInsets.only(bottom: 10),
+            child: ShimmerBox(
+                height: 130, borderRadius: BorderRadius.all(Radius.circular(12))),
+          ),
+        ),
+      );
     }
     if (_error != null) {
       return ErrorView(error: _error!, onRetry: _load);

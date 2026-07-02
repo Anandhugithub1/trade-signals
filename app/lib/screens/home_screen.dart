@@ -6,6 +6,7 @@ import '../theme/app_colors.dart';
 import '../widgets/signal_card.dart';
 import '../widgets/disclaimer_banner.dart';
 import '../widgets/error_view.dart';
+import '../widgets/shimmer.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -59,22 +60,30 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 22),
                   _Header(),
                   const SizedBox(height: 14),
-                  const DisclaimerBanner(),
+                  const FadeIn(child: DisclaimerBanner()),
                   const SizedBox(height: 14),
-                  _HeroPerformanceCard(stats: stats),
+                  FadeIn(delayMs: 60, child: _HeroPerformanceCard(stats: stats)),
                   const SizedBox(height: 14),
-                  _SentimentCard(sentiment: sentiment),
+                  FadeIn(delayMs: 120, child: _SentimentCard(sentiment: sentiment)),
                   const SizedBox(height: 16),
-                  if (feed.isNotEmpty) _FeaturedCard(signal: feed.first),
+                  if (feed.isNotEmpty)
+                    FadeIn(delayMs: 180, child: _FeaturedCard(signal: feed.first)),
                   const SizedBox(height: 24),
                   _SectionHeader(
                     title: 'Recent Signals',
                     tag: '${active.length} active',
                   ),
                   const SizedBox(height: 10),
-                  ...feed.take(4).map((s) => SignalCard(signal: s, compact: true)),
-                  const SizedBox(height: 12),
-                  _ViewAllBtn(),
+                  if (feed.isEmpty)
+                    const _EmptyFeed()
+                  else ...[
+                    ...feed.take(4).toList().asMap().entries.map((e) => FadeIn(
+                          delayMs: 220 + e.key * 60,
+                          child: SignalCard(signal: e.value, compact: true),
+                        )),
+                    const SizedBox(height: 12),
+                    _ViewAllBtn(),
+                  ],
                   const SizedBox(height: 28),
                 ],
               ),
@@ -91,24 +100,62 @@ class _LoadingBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final c = context.colors;
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 20),
+      physics: const NeverScrollableScrollPhysics(),
       children: [
         const SizedBox(height: 22),
         _Header(),
         const SizedBox(height: 24),
-        ...[140.0, 120.0, 200.0, 80.0, 80.0, 80.0].map((h) => Padding(
+        ...[180.0, 130.0, 170.0, 72.0, 72.0, 72.0].map((h) => Padding(
               padding: const EdgeInsets.only(bottom: 14),
-              child: Container(
-                height: h,
-                decoration: BoxDecoration(
-                  color: c.card,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-              ),
+              child: ShimmerBox(height: h),
             )),
       ],
+    );
+  }
+}
+
+class _EmptyFeed extends StatelessWidget {
+  const _EmptyFeed();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return FadeIn(
+      delayMs: 220,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
+        decoration: BoxDecoration(
+          color: c.card,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: c.border),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: c.accentBg,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.radar_rounded, color: c.accent, size: 26),
+            ),
+            const SizedBox(height: 14),
+            Text('Scanning the market',
+                style: TextStyle(
+                    color: c.t1, fontSize: 15, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            Text(
+              'No signals right now. The algorithm only trades\nconfirmed trends — new signals land every 4 hours.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: c.t2, fontSize: 12, height: 1.5),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
