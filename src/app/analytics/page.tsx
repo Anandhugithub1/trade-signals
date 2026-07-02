@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState, memo, useCallback } from 'react'
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis,
-  AreaChart, Area,
+  AreaChart, Area, ReferenceLine,
 } from 'recharts'
 import { supabase, isConfigured } from '@/lib/supabase'
 import { isAdmin } from '@/lib/admin'
@@ -30,7 +30,9 @@ const Tip = memo(({ active, payload, label }: any) => {
           <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: p.color ?? p.fill }} />
           <span className="text-[#8b949e]">{p.name}</span>
           <span className="ml-auto font-bold text-white pl-4">
-            {p.value}{['Win Rate','Precision','Bullish','Neutral','Bearish'].includes(p.name) ? '%' : ''}
+            {p.name === 'P&L'
+              ? `${p.value >= 0 ? '+' : '−'}$${Math.abs(p.value)}`
+              : `${p.value}${['Win Rate','Precision','Bullish','Neutral','Bearish'].includes(p.name) ? '%' : ''}`}
           </span>
         </div>
       ))}
@@ -184,6 +186,26 @@ export default function Analytics() {
     Bullish: x.bullish_pct, Neutral: x.neutral_pct, Bearish: x.bearish_pct,
   })), [sent])
 
+  // Equity curve — cumulative P&L at $1,000/trade using the algorithm's
+  // actual TP/SL percentages (3.5% win = +$35, 2% loss = -$20)
+  const equity = useMemo(() => {
+    const closed = signals
+      .filter(x => x.result === 'win' || x.result === 'loss')
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+    let cum = 0
+    return closed.map((x, i) => {
+      cum += x.result === 'win' ? 35 : -20
+      return {
+        n: i + 1,
+        date: new Date(x.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        'P&L': Math.round(cum * 100) / 100,
+        pair: x.pair,
+      }
+    })
+  }, [signals])
+  const finalPnl = equity.length ? equity[equity.length - 1]['P&L'] : 0
+  const eqColor  = finalPnl >= 0 ? '#22c55e' : '#ef4444'
+
   // ── guards ────────────────────────────────────────────────────────────────
   if (user === null || loading) return <PageSkeleton />
   if (!isAdmin(user?.email))   return <Blocked />
@@ -234,6 +256,37 @@ export default function Analytics() {
             ))}
           </div>
         </div>
+
+        {/* ── Equity curve ── */}
+        <Section
+          title="Equity Curve — $1,000 per trade"
+          sub="Cumulative P&L across closed signals in chronological order, using the algorithm's 3.5% TP / 2% SL."
+          right={equity.length > 0 ? (
+            <span className="text-lg font-black flex-shrink-0" style={{ color: eqColor }}>
+              {finalPnl >= 0 ? '+' : '−'}${Math.abs(finalPnl).toFixed(0)}
+            </span>
+          ) : undefined}
+        >
+          {!mounted ? <Skel /> : equity.length < 2 ? (
+            <NoData msg="Needs at least 2 closed signals to draw the curve." />
+          ) : (
+            <ResponsiveContainer width="100%" height={220}>
+              <AreaChart data={equity} margin={{ right: 8, top: 8 }}>
+                <defs>
+                  <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%"  stopColor={eqColor} stopOpacity={0.25} />
+                    <stop offset="95%" stopColor={eqColor} stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="date" tick={{ fill: '#8b949e', fontSize: 10 }} axisLine={false} tickLine={false} minTickGap={24} />
+                <YAxis tick={{ fill: '#8b949e', fontSize: 10 }} tickFormatter={v => `$${v}`} width={44} axisLine={false} tickLine={false} />
+                <ReferenceLine y={0} stroke="#30363d" strokeDasharray="4 4" />
+                <Tooltip content={<Tip />} />
+                <Area type="monotone" dataKey="P&L" stroke={eqColor} fill="url(#eqGrad)" strokeWidth={2.5} dot={false} />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </Section>
 
         {/* ── Donuts row ── */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
