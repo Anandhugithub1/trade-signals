@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useMemo, useState, memo } from 'react'
+import { useEffect, useMemo, useState, memo, useCallback } from 'react'
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis,
@@ -223,7 +223,7 @@ export default function Analytics() {
               { label: 'Wins',           value: s.wins,    color: '#22c55e' },
               { label: 'Losses',         value: s.losses,  color: '#ef4444' },
               { label: 'Pending',        value: s.pending, color: '#f59e0b' },
-              { label: 'Avg Confidence', value: `${s.conf}%` },
+              { label: 'Avg Strength', value: `${s.conf}%` },
               { label: 'Longs',          value: s.longs,   color: '#22c55e' },
               { label: 'Shorts',         value: s.shorts,  color: '#ef4444' },
             ].map(({ label, value, color }) => (
@@ -327,9 +327,9 @@ export default function Analytics() {
           )}
         </Section>
 
-        {/* ── Confidence + Indicator side by side ── */}
+        {/* ── Signal strength + Indicator side by side ── */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
-          <Section title="Win Rate by Confidence">
+          <Section title="Win Rate by Signal Strength">
             {!mounted ? <Skel h={220} /> : (
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={confBar} margin={{ right: 8, top: 4, bottom: 0 }} barCategoryGap="30%">
@@ -401,6 +401,9 @@ export default function Analytics() {
           )}
         </Section>
 
+        {/* ── P&L Simulator ── */}
+        <PnLSimulator wins={s.wins} losses={s.losses} />
+
         {/* ── Pair detail table ── */}
         <Section title="Pair Detail Table">
           <div className="overflow-x-auto -mx-1">
@@ -436,6 +439,122 @@ export default function Analytics() {
     </div>
   )
 }
+
+// ── P&L Simulator ─────────────────────────────────────────────────────────────
+function PnLSimulator({ wins, losses }: { wins: number; losses: number }) {
+  const [tradeSize, setTradeSize] = useState(100)
+  const [riskPct,   setRiskPct]   = useState(2)
+  const [targetPct, setTargetPct] = useState(3)
+
+  const calc = useMemo(() => {
+    const totalTrades   = wins + losses
+    const winAmount     = (tradeSize * targetPct) / 100
+    const lossAmount    = (tradeSize * riskPct)   / 100
+    const grossProfit   = wins   * winAmount
+    const grossLoss     = losses * lossAmount
+    const net           = grossProfit - grossLoss
+    const totalDeployed = totalTrades * tradeSize
+    const roi           = totalDeployed > 0 ? (net / totalDeployed) * 100 : 0
+    return { winAmount, lossAmount, grossProfit, grossLoss, net, totalDeployed, roi, totalTrades }
+  }, [wins, losses, tradeSize, riskPct, targetPct])
+
+  const isProfit = calc.net >= 0
+  const netColor = isProfit ? '#22c55e' : '#ef4444'
+
+  const Input = useCallback(({ label, value, onChange, symbol = '$', step = 1 }: {
+    label: string; value: number; onChange: (v: number) => void; symbol?: string; step?: number
+  }) => (
+    <div>
+      <p className="text-[10px] text-[#8b949e] uppercase tracking-wide font-medium mb-1.5">{label}</p>
+      <div className="flex items-center gap-1.5 bg-[#21262d] border border-[#30363d] rounded-lg px-3 py-2 focus-within:border-[#6366f1] transition-colors">
+        <span className="text-[#8b949e] text-xs font-semibold">{symbol}</span>
+        <input
+          type="number" value={value} step={step} min={0}
+          onChange={e => onChange(parseFloat(e.target.value) || 0)}
+          className="bg-transparent text-white text-sm font-bold w-full outline-none"
+        />
+      </div>
+    </div>
+  ), [])
+
+  return (
+    <div className="bg-[#161b22] border border-[#30363d] rounded-2xl overflow-hidden">
+      <div className="px-5 sm:px-6 py-4 border-b border-[#21262d]">
+        <h2 className="text-sm font-semibold text-white">P&L Simulator</h2>
+        <p className="text-[11px] text-[#8b949e] mt-0.5">
+          Simulate real dollar outcome from your {wins + losses} closed signals.
+        </p>
+      </div>
+
+      <div className="p-5 sm:p-6 space-y-6">
+        {/* Inputs */}
+        <div className="grid grid-cols-3 gap-3 sm:gap-4">
+          <Input label="Trade Size" value={tradeSize} onChange={setTradeSize} />
+          <Input label="Risk % (SL)" value={riskPct} onChange={setRiskPct} symbol="%" step={0.5} />
+          <Input label="Target % (TP)" value={targetPct} onChange={setTargetPct} symbol="%" step={0.5} />
+        </div>
+
+        {calc.totalTrades === 0 ? (
+          <p className="text-[#475569] text-sm text-center py-4">No closed signals yet.</p>
+        ) : (
+          <>
+            {/* Net P&L — big number */}
+            <div className="bg-[#0d1117] border border-[#30363d] rounded-xl p-5 text-center">
+              <p className="text-[11px] text-[#8b949e] uppercase tracking-widest font-medium mb-2">Net P&L</p>
+              <p className="text-5xl font-black tracking-tight" style={{ color: netColor }}>
+                {isProfit ? '+' : '−'}${Math.abs(calc.net).toFixed(2)}
+              </p>
+              <p className="text-[#8b949e] text-xs mt-2">
+                from {calc.totalTrades} closed trades · ${tradeSize} each · ROI{' '}
+                <span className="font-bold" style={{ color: netColor }}>
+                  {isProfit ? '+' : ''}{calc.roi.toFixed(2)}%
+                </span>
+              </p>
+            </div>
+
+            {/* Breakdown grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+                { label: 'Gross Profit',   value: `+$${calc.grossProfit.toFixed(2)}`, color: '#22c55e', sub: `${wins} wins × $${calc.winAmount.toFixed(2)}` },
+                { label: 'Gross Loss',     value: `-$${calc.grossLoss.toFixed(2)}`,   color: '#ef4444', sub: `${losses} losses × $${calc.lossAmount.toFixed(2)}` },
+                { label: 'Capital Used',   value: `$${calc.totalDeployed.toFixed(0)}`, color: '#f59e0b', sub: `${calc.totalTrades} trades × $${tradeSize}` },
+                { label: 'Return on Cap',  value: `${isProfit ? '+' : ''}${calc.roi.toFixed(2)}%`, color: netColor, sub: 'net / capital deployed' },
+              ].map(({ label, value, color, sub }) => (
+                <div key={label} className="bg-[#21262d] rounded-xl p-4">
+                  <p className="text-[9px] text-[#8b949e] uppercase tracking-widest font-semibold">{label}</p>
+                  <p className="text-lg font-black mt-1" style={{ color }}>{value}</p>
+                  <p className="text-[10px] text-[#8b949e] mt-1">{sub}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Visual P&L bar */}
+            <div>
+              <div className="flex justify-between text-[11px] text-[#8b949e] mb-1.5">
+                <span>Profit  ${calc.grossProfit.toFixed(2)}</span>
+                <span>Loss  ${calc.grossLoss.toFixed(2)}</span>
+              </div>
+              <div className="h-3 bg-[#21262d] rounded-full overflow-hidden flex">
+                {calc.grossProfit + calc.grossLoss > 0 && (
+                  <>
+                    <div className="h-full bg-[#22c55e] rounded-l-full transition-all duration-500"
+                      style={{ width: `${(calc.grossProfit / (calc.grossProfit + calc.grossLoss)) * 100}%` }} />
+                    <div className="h-full bg-[#ef4444] rounded-r-full transition-all duration-500"
+                      style={{ width: `${(calc.grossLoss / (calc.grossProfit + calc.grossLoss)) * 100}%` }} />
+                  </>
+                )}
+              </div>
+              <p className="text-[10px] text-[#8b949e] mt-2 text-center">
+                Assumptions: each win earns <span className="text-[#22c55e] font-bold">${calc.winAmount.toFixed(2)}</span> · each loss costs <span className="text-[#ef4444] font-bold">${calc.lossAmount.toFixed(2)}</span>
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 
 // ── access denied ─────────────────────────────────────────────────────────────
 function Blocked() {
