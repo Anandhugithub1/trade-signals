@@ -1,6 +1,11 @@
 """
-generate_signals — creates trade signals for top 15 crypto pairs
-by market cap + Gold (XAUUSDT) and Silver (XAGUSDT) commodity perpetuals.
+generate_signals — creates trade signals for top 15 crypto pairs by market cap.
+
+NOTE: Gold (XAUUSDT) and Silver (XAGUSDT) commodity perpetuals are dropped for
+now — their perpetual futures markets are thinner and more prone to price
+manipulation than major crypto pairs, which skews the technical indicators.
+The is_commodity handling in analyze_pair() is left in place so they can be
+re-added later without touching the voting logic.
 
 ═══════════════════════════════════════════════════════════════════
  DATA SOURCES  (all free, no API keys required)
@@ -39,7 +44,7 @@ by market cap + Gold (XAUUSDT) and Silver (XAGUSDT) commodity perpetuals.
      TP = fixed 3.5% target (matches 1h momentum swing)
      SL = min(2× ATR, 2.3% cap), then tightened so reward:risk is never < 1:1.5
 
-Trigger: every 4h via GitHub Actions cron. Max 4 signals/day.
+Trigger: every 4h via GitHub Actions cron. Max 3 signals/day.
 """
 
 import json
@@ -140,22 +145,19 @@ def _retry(fn, retries: int = 3, backoff: float = 1.5, label: str = ""):
 
     raise last_exc
 
-# Top 15 crypto by market cap + Gold & Silver commodity perpetuals
+# Top 15 crypto by market cap — stablecoins excluded
 # All available on Binance/Bybit/OKX USDT-M perpetual futures
+# Gold (XAUUSDT) / Silver (XAGUSDT) intentionally dropped — see module docstring.
 TOP_PAIRS = [
-    # ── Crypto (top 15 by market cap, stablecoins excluded) ──
     "BTCUSDT",  "ETHUSDT",  "BNBUSDT",  "SOLUSDT",  "XRPUSDT",   # 1–5
     "ADAUSDT",  "DOGEUSDT", "TRXUSDT",  "AVAXUSDT", "TONUSDT",    # 6–10
     "DOTUSDT",  "LINKUSDT", "LTCUSDT",  "BCHUSDT",  "UNIUSDT",    # 11–15
-    # ── Commodity perpetuals ─────────────────────────────────
-    "XAUUSDT",  # Gold  (XAU/USDT perpetual)
-    "XAGUSDT",  # Silver (XAG/USDT perpetual)
 ]
 
 MIN_BULL_SCORE        = 4    # net bullish votes required for LONG
 MIN_BEAR_SCORE        = 4    # net bearish votes required for SHORT
 MIN_SIGNAL_STRENGTH   = 72   # signals below this strength % are discarded
-MAX_SIGNALS           = 4    # insert at most this many signals per day
+MAX_SIGNALS           = 3    # insert at most this many signals per day
 
 # ── Regime filter (momentum needs a trend) ────────────────────────────────────
 ADX_TREND_MIN = 20   # ADX below this = ranging/choppy → skip (no momentum edge)
@@ -641,14 +643,6 @@ def analyze_pair(pair: str, candles: list,
                  funding_score: int = 0, funding_reason: str = "",
                  lsr_score: int = 0, lsr_reason: str = "") -> dict | None:
     """
-    Score a pair across all indicators and return a signal dict, or None.
-
-    Voting table
-    ─────────────────────────────────────────────────────────
-    Indicator         Bullish (+1)          Bearish (-1)
-    ─────────────────────────────────────────────────────────
-    RSI(14)           < 35 (oversold)       > 65 (overbought)
-    MACD histogram    positive              negative
     Regime-filtered momentum — see the module docstring for the full strategy.
     Returns an analysis dict; has_signal=True only when a trade is generated.
     """
@@ -795,7 +789,7 @@ def analyze_pair(pair: str, candles: list,
         votes.append(("Volume", 0, f"volume {vol_r:.2f}× avg"))
 
     # ── Decision ─────────────────────────────────────────────────────────────
-    base_result = {"score": score, "price": price, "atr": atr_val,
+    base_result = {"score": score, "price": entry_price, "atr": atr_val,
                    "adx": round(adx, 1), "votes": votes, "has_signal": False}
 
     if score >= MIN_BULL_SCORE and uptrend:
