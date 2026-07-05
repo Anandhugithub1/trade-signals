@@ -179,7 +179,7 @@ export default function SignalsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[#2a2a3a]">
-                {['Pair', 'Direction', 'Entry', 'Last Price', 'SL / TP', 'Confidence', 'Date', 'Result', 'Actions'].map(
+                {['Pair', 'Direction', 'Entry', 'Last Price', 'SL / TP', 'Strength', 'Date', 'Result', 'Note', 'Actions'].map(
                   (h) => (
                     <th
                       key={h}
@@ -195,7 +195,7 @@ export default function SignalsPage() {
               {loading ? (
                 [...Array(5)].map((_, i) => (
                   <tr key={i} className="border-b border-[#2a2a3a]/40">
-                    {[...Array(9)].map((_, j) => (
+                    {[...Array(10)].map((_, j) => (
                       <td key={j} className="px-4 py-3.5">
                         <div className="h-3.5 bg-[#2a2a3a] rounded animate-pulse" style={{ width: `${40 + j * 10}%` }} />
                       </td>
@@ -204,7 +204,7 @@ export default function SignalsPage() {
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-16 text-center">
+                  <td colSpan={10} className="px-4 py-16 text-center">
                     <p className="text-[#475569] text-sm">
                       {signals.length === 0
                         ? 'No signals yet. Click "New Signal" to create your first one.'
@@ -298,6 +298,18 @@ export default function SignalsPage() {
                       >
                         {s.result}
                       </span>
+                    </td>
+                    <td className="px-4 py-3.5 max-w-[220px]">
+                      {s.note ? (
+                        <p
+                          title={s.note}
+                          className="text-xs text-[#94a3b8] leading-snug line-clamp-2 cursor-help"
+                        >
+                          {s.note}
+                        </p>
+                      ) : (
+                        <span className="text-[#334155] text-xs">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-3.5">
                       <div className="flex items-center gap-3">

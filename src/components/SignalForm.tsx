@@ -32,6 +32,7 @@ export default function SignalForm({ signal, onClose, onSave }: Props) {
     timestamp: toLocalDatetimeInput(signal?.timestamp ?? new Date().toISOString()),
     result: (signal?.result ?? 'pending') as SignalResult,
     close_price: signal?.close_price?.toString() ?? '',
+    note: signal?.note ?? '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -60,6 +61,7 @@ export default function SignalForm({ signal, onClose, onSave }: Props) {
         timestamp: new Date(form.timestamp).toISOString(),
         result: form.result,
         close_price: form.close_price ? parseFloat(form.close_price) : null,
+        note: form.note.trim() ? form.note.trim().slice(0, 500) : null,
       })
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Something went wrong')
@@ -175,11 +177,11 @@ export default function SignalForm({ signal, onClose, onSave }: Props) {
             ))}
           </div>
 
-          {/* Confidence + Timestamp */}
+          {/* Signal strength + Timestamp */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-[#94a3b8] mb-1.5 uppercase tracking-wider">
-                Confidence{' '}
+                Strength{' '}
                 <span className="text-[#6366f1] normal-case">{form.confidence}%</span>
               </label>
               <input
@@ -231,6 +233,22 @@ export default function SignalForm({ signal, onClose, onSave }: Props) {
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* Note — main reason for the trade */}
+          <div>
+            <label className="block text-xs font-semibold text-[#94a3b8] mb-1.5 uppercase tracking-wider">
+              Note{' '}
+              <span className="text-[#475569] normal-case">{form.note.length}/500</span>
+            </label>
+            <textarea
+              value={form.note}
+              onChange={(e) => set('note', e.target.value.slice(0, 500))}
+              maxLength={500}
+              rows={3}
+              className="w-full bg-[#0f0f13] border border-[#2a2a3a] rounded-lg px-3 py-2.5 text-sm text-white placeholder-[#475569] focus:border-[#6366f1] focus:outline-none transition-colors resize-none"
+              placeholder="Main reason for this trade (e.g. ADX confirms uptrend; EMA200/EMA50 aligned bullish; MACD bullish momentum)"
+            />
           </div>
 
           {/* Close price — only when result is not pending */}
