@@ -47,6 +47,9 @@ app/android/local.properties
 app/ios/Pods/
 app/ios/.symlinks/
 
+# ── Local test scripts (not for GitHub) ───────────────────────────────────────
+test_scripts/
+
 # ── IDE / OS ──────────────────────────────────────────────────────────────────
 .idea/
 .vscode/

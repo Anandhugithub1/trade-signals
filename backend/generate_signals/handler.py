@@ -636,6 +636,28 @@ def get_long_short_ratio(pair: str) -> tuple[int, str]:
 
 # ── signal engine ─────────────────────────────────────────────────────────────
 
+NOTE_MAX_LEN = 500  # hard cap enforced on the note column
+
+def _build_note(direction: str, adx: float, votes: list) -> str:
+    """
+    Plain-English summary of the main reason(s) behind the trade — the
+    strongest votes that agree with the final direction, joined into one
+    sentence. Capped at NOTE_MAX_LEN chars.
+    """
+    sign = 1 if direction == "long" else -1
+    agreeing = sorted(
+        (v for v in votes if v[1] * sign > 0),
+        key=lambda v: abs(v[1]),
+        reverse=True,
+    )
+    reasons = [reason for _name, _vote, reason in agreeing[:3]]
+    trend = f"ADX {adx:.1f} confirms a {'strong' if adx >= 30 else 'clear'} {'up' if direction == 'long' else 'down'}trend"
+    note = "; ".join([trend] + reasons) + "."
+    if len(note) > NOTE_MAX_LEN:
+        note = note[:NOTE_MAX_LEN - 1].rsplit(" ", 1)[0] + "…"
+    return note
+
+
 def analyze_pair(pair: str, candles: list,
                  fear_greed_score: int, fear_greed_reason: str,
                  macro_score: int = 0, macro_reason: str = "",
@@ -831,6 +853,8 @@ def analyze_pair(pair: str, candles: list,
     # Compact votes dict — only non-zero votes, no reason strings (~120 bytes).
     votes_json = {n: v for n, v, _ in votes if v != 0}
 
+    note = _build_note(direction, adx, votes)
+
     return {
         "signal": {
             "id":          str(uuid.uuid4()),
@@ -846,6 +870,7 @@ def analyze_pair(pair: str, candles: list,
             "result":      "pending",
             "close_price": None,
             "votes_json":  votes_json,
+            "note":        note,
         },
         "score":       score,
         "price":       entry_price,
