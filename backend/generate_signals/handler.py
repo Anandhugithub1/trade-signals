@@ -168,6 +168,12 @@ ATR_SL_MULT   = 2.0    # SL = 2× ATR (gives a 1h trade room to breathe)
 MAX_SL_PCT    = 0.023  # hard SL cap → keeps reward:risk at/above the floor
 MIN_RR        = 1.5    # never generate a signal below 1 : 1.5 reward:risk
 
+# Shallow limit entry: instead of entering at raw market price, ask for a small
+# better fill — 0.3× ATR below price for longs (above for shorts). Backtested
+# across 3/6/9-month windows to beat market-entry on both win rate and
+# expectancy in every window (see test_scripts). SL/TP anchor to this entry.
+ENTRY_ATR_MULT = 0.3
+
 CANDLE_LIMIT  = 300    # 300 × 1h ≈ 12.5 days (EMA200 well-converged)
 SEP = "-" * 60
 
@@ -820,6 +826,17 @@ def analyze_pair(pair: str, candles: list,
         direction = "short"
     else:
         return base_result   # score too weak, or would be counter-trend
+
+    # ── Shallow limit entry — ask for a small better fill than raw market ─────
+    # Enter 0.3× ATR below the market price for longs (above for shorts) rather
+    # than at market. A small discount improves the fill (win rate + expectancy)
+    # without demanding a pullback so deep that momentum winners run away.
+    # Everything downstream (SL/TP, RR) anchors to this adjusted entry.
+    market_price = entry_price
+    if direction == "long":
+        entry_price = round(market_price - ENTRY_ATR_MULT * atr_val, 6)
+    else:
+        entry_price = round(market_price + ENTRY_ATR_MULT * atr_val, 6)
 
     # ── Signal strength: |score| / active votes → 60–95 ──────────────────────
     active   = len([v for v in votes if v[1] != 0]) or 1
