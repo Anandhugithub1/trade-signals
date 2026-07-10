@@ -39,8 +39,19 @@ re-added later without touching the voting logic.
      LONG  when net score >= +4  AND uptrend
      SHORT when net score <= -4  AND downtrend
      Signal strength = |score| / active votes → 60–95 %
+       NOTE: this is INDICATOR-AGREEMENT strength (how strongly the votes
+       align), NOT a win probability. Backtests over 2 000+ trades show it
+       does NOT predict win rate — an 85%-strength signal wins about as
+       often as a 75% one. Treat/label it as "how clean the setup is",
+       never as "chance this trade wins".
 
-  STEP 4 — RISK
+  STEP 4 — ENTRY
+     Limit entry at the nearest recent swing low (longs) / swing high
+     (shorts) within 1.2x ATR of price — a real reaction level, not an
+     arbitrary offset. Falls back to a shallow 0.3x ATR offset if no
+     qualifying swing level is nearby (see find_swing_level()).
+
+  STEP 5 — RISK
      TP = fixed 3.5% target (matches 1h momentum swing)
      SL = min(2× ATR, 2.3% cap), then tightened so reward:risk is never < 1:1.5
 
@@ -145,13 +156,16 @@ def _retry(fn, retries: int = 3, backoff: float = 1.5, label: str = ""):
 
     raise last_exc
 
-# Top 15 crypto by market cap — stablecoins excluded
-# All available on Binance/Bybit/OKX USDT-M perpetual futures
+# Top crypto by market cap — stablecoins excluded.
+# All available on Binance/Bybit/OKX USDT-M perpetual futures.
 # Gold (XAUUSDT) / Silver (XAGUSDT) intentionally dropped — see module docstring.
+# BNBUSDT, TRXUSDT, AVAXUSDT, LINKUSDT dropped: they were the consistently
+# weakest performers across both 9-month and 2-year backtests (~23-31% win
+# rate vs ~40-54% for the kept pairs). See test_scripts.
 TOP_PAIRS = [
-    "BTCUSDT",  "ETHUSDT",  "BNBUSDT",  "SOLUSDT",  "XRPUSDT",   # 1–5
-    "ADAUSDT",  "DOGEUSDT", "TRXUSDT",  "AVAXUSDT", "TONUSDT",    # 6–10
-    "DOTUSDT",  "LINKUSDT", "LTCUSDT",  "BCHUSDT",  "UNIUSDT",    # 11–15
+    "BTCUSDT",  "ETHUSDT",  "SOLUSDT",  "XRPUSDT",  "ADAUSDT",   # 1–5
+    "DOGEUSDT", "TONUSDT",  "DOTUSDT",  "LTCUSDT",  "BCHUSDT",   # 6–10
+    "UNIUSDT",                                                    # 11
 ]
 
 MIN_BULL_SCORE        = 4    # net bullish votes required for LONG
@@ -168,11 +182,19 @@ ATR_SL_MULT   = 2.0    # SL = 2× ATR (gives a 1h trade room to breathe)
 MAX_SL_PCT    = 0.023  # hard SL cap → keeps reward:risk at/above the floor
 MIN_RR        = 1.5    # never generate a signal below 1 : 1.5 reward:risk
 
-# Shallow limit entry: instead of entering at raw market price, ask for a small
-# better fill — 0.3× ATR below price for longs (above for shorts). Backtested
-# across 3/6/9-month windows to beat market-entry on both win rate and
-# expectancy in every window (see test_scripts). SL/TP anchor to this entry.
-ENTRY_ATR_MULT = 0.3
+# Swing support/resistance limit entry: instead of entering at raw market
+# price, ask for a fill at the nearest recent swing low (longs) / swing high
+# (shorts) — a real level the market has already reacted to, rather than an
+# arbitrary ATR offset. Only used if that level is within MAX_DIST_ATR of
+# price; otherwise falls back to the shallow 0.3x ATR offset so a signal is
+# never skipped outright for lack of a nearby level. Backtested across
+# 3/6/9-month windows to beat both market-entry and the old flat-ATR shallow
+# limit on expectancy (see test_scripts/sim_sr_limit.py). SL/TP anchor to
+# this entry.
+SWING_LOOKBACK = 60    # candles to search for a swing level
+SWING_ORDER    = 3     # a candle must be the extreme within +/- this many neighbours
+MAX_DIST_ATR   = 1.2   # only use the swing level if within this many ATRs of price
+ENTRY_ATR_MULT = 0.3   # fallback offset when no qualifying swing level is nearby
 
 CANDLE_LIMIT  = 300    # 300 × 1h ≈ 12.5 days (EMA200 well-converged)
 SEP = "-" * 60
@@ -229,6 +251,44 @@ def calc_bollinger(close: np.ndarray, period: int = 20):
     lower  = mid - 2 * std
     pct_b  = (close[-1] - lower) / (upper - lower) if upper != lower else 0.5
     return upper, mid, lower, float(pct_b)
+
+
+def find_swing_level(direction: str, price: float, atr: float,
+                      high: np.ndarray, low: np.ndarray) -> float | None:
+    """Nearest qualifying swing low (long) / swing high (short) within the
+    last SWING_LOOKBACK candles, on the favourable side of price. A swing
+    point must be the local extreme within +/- SWING_ORDER candles. Returns
+    None if no swing point qualifies, or the nearest one is farther than
+    MAX_DIST_ATR * ATR from price (too far to be a realistic pullback)."""
+    n = len(low)
+    lo_win = max(0, n - SWING_LOOKBACK)
+    best = None
+    best_dist = None
+
+    for i in range(lo_win + SWING_ORDER, n - SWING_ORDER):
+        if direction == "long":
+            window_lows = low[i - SWING_ORDER: i + SWING_ORDER + 1]
+            if low[i] != window_lows.min():
+                continue
+            level = low[i]
+            if level >= price:
+                continue
+            dist = price - level
+        else:
+            window_highs = high[i - SWING_ORDER: i + SWING_ORDER + 1]
+            if high[i] != window_highs.max():
+                continue
+            level = high[i]
+            if level <= price:
+                continue
+            dist = level - price
+
+        if best_dist is None or dist < best_dist:
+            best, best_dist = level, dist
+
+    if best is None or best_dist > MAX_DIST_ATR * atr:
+        return None
+    return float(best)
 
 
 def calc_atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> float:
@@ -827,18 +887,26 @@ def analyze_pair(pair: str, candles: list,
     else:
         return base_result   # score too weak, or would be counter-trend
 
-    # ── Shallow limit entry — ask for a small better fill than raw market ─────
-    # Enter 0.3× ATR below the market price for longs (above for shorts) rather
-    # than at market. A small discount improves the fill (win rate + expectancy)
-    # without demanding a pullback so deep that momentum winners run away.
+    # ── Swing S/R limit entry — ask for a fill at a real reaction level ───────
+    # Prefer the nearest recent swing low (longs) / swing high (shorts) within
+    # MAX_DIST_ATR of price — a level the market has already reacted to, not
+    # an arbitrary offset. Falls back to the shallow 0.3x ATR offset if no
+    # qualifying swing level is nearby, so a signal is never skipped outright.
     # Everything downstream (SL/TP, RR) anchors to this adjusted entry.
     market_price = entry_price
-    if direction == "long":
+    swing_level = find_swing_level(direction, market_price, atr_val, high, low)
+    if swing_level is not None:
+        entry_price = round(swing_level, 6)
+    elif direction == "long":
         entry_price = round(market_price - ENTRY_ATR_MULT * atr_val, 6)
     else:
         entry_price = round(market_price + ENTRY_ATR_MULT * atr_val, 6)
 
     # ── Signal strength: |score| / active votes → 60–95 ──────────────────────
+    # Indicator-AGREEMENT strength (how cleanly the votes align), 60–95.
+    # NOT a win probability — backtests show it doesn't predict win rate.
+    # Kept for internal ranking (Pass 2 picks the highest) and expiry sizing;
+    # the user-facing app no longer displays it as a confidence %.
     active   = len([v for v in votes if v[1] != 0]) or 1
     strength = max(60, min(95, int(60 + min(abs(score) / active, 1.0) * 35)))
 
@@ -880,7 +948,7 @@ def analyze_pair(pair: str, candles: list,
             "entry":       round(float(entry_price), 6),
             "stop_loss":   sl,
             "take_profit": tp,
-            "confidence":  strength,     # DB column kept as 'confidence'; value = signal strength
+            "confidence":  strength,     # DB column name kept for compat; value = indicator-agreement strength, NOT a win probability (app no longer shows it)
             "rr_ratio":    rr_ratio,
             "timestamp":   now.isoformat(),
             "expires_at":  expires_at,
