@@ -46,10 +46,13 @@ re-added later without touching the voting logic.
        never as "chance this trade wins".
 
   STEP 4 — ENTRY
-     Limit entry REQUIRED at the nearest recent swing low (longs) / swing
-     high (shorts) within 1.2x ATR of price — a real reaction level, not an
-     arbitrary offset. No fallback: if no qualifying swing level is nearby,
-     the signal is skipped entirely (see find_swing_level()).
+     Limit entry at the nearest recent swing low (longs) / swing high
+     (shorts) within 1.2x ATR of price — a real reaction level, not an
+     arbitrary offset. Falls back to a shallow 0.3x ATR offset if no
+     qualifying swing level is nearby (see find_swing_level()). Walk-forward
+     validated (3 independent non-overlapping blocks) to beat both plain
+     market entry and a no-fallback variant — see
+     test_scripts/walkforward_entry_variants.py.
 
   STEP 5 — RISK
      TP = fixed 3.5% target (matches 1h momentum swing)
@@ -183,15 +186,23 @@ MAX_SL_PCT    = 0.023  # hard SL cap → keeps reward:risk at/above the floor
 MIN_RR        = 1.5    # never generate a signal below 1 : 1.5 reward:risk
 
 # Swing support/resistance limit entry: instead of entering at raw market
-# price, require a fill at the nearest recent swing low (longs) / swing high
+# price, prefer a fill at the nearest recent swing low (longs) / swing high
 # (shorts) — a real level the market has already reacted to, rather than an
 # arbitrary ATR offset. Only used if that level is within MAX_DIST_ATR of
-# price. NO fallback: if no qualifying level exists nearby, the signal is
-# skipped entirely (quality over quantity — see test_scripts/sim_sr_limit.py).
-# SL/TP anchor to this entry.
+# price. Falls back to a shallow 0.3x ATR offset if no qualifying level is
+# nearby, so a signal is never skipped outright for lack of one.
+#
+# A "no fallback" variant (skip the signal entirely when no swing level
+# qualifies) was tried and reverted: a walk-forward validation across 3
+# independent, non-overlapping ~3-month blocks (see
+# test_scripts/walkforward_entry_variants.py) showed swing+fallback beats
+# both plain market entry AND the no-fallback variant in 2 of 3 blocks, while
+# no-fallback never won a single block and was a clear loser in one
+# (-0.205R/trade). SL/TP anchor to this entry.
 SWING_LOOKBACK = 60    # candles to search for a swing level
 SWING_ORDER    = 3     # a candle must be the extreme within +/- this many neighbours
-MAX_DIST_ATR   = 1.2   # only take the trade if a swing level is within this many ATRs of price
+MAX_DIST_ATR   = 1.2   # only use the swing level if within this many ATRs of price
+ENTRY_ATR_MULT = 0.3   # fallback offset when no qualifying swing level is nearby
 
 CANDLE_LIMIT  = 300    # 300 × 1h ≈ 12.5 days (EMA200 well-converged)
 SEP = "-" * 60
@@ -885,17 +896,19 @@ def analyze_pair(pair: str, candles: list,
         return base_result   # score too weak, or would be counter-trend
 
     # ── Swing S/R limit entry — ask for a fill at a real reaction level ───────
-    # Require the nearest recent swing low (longs) / swing high (shorts) within
+    # Prefer the nearest recent swing low (longs) / swing high (shorts) within
     # MAX_DIST_ATR of price — a level the market has already reacted to, not
-    # an arbitrary offset. NO fallback: if no qualifying level exists nearby,
-    # the signal is skipped entirely. Quality over quantity — a forced entry
-    # at a made-up price is worse than no trade.
+    # an arbitrary offset. Falls back to the shallow 0.3x ATR offset if no
+    # qualifying swing level is nearby, so a signal is never skipped outright.
     # Everything downstream (SL/TP, RR) anchors to this adjusted entry.
     market_price = entry_price
     swing_level = find_swing_level(direction, market_price, atr_val, high, low)
-    if swing_level is None:
-        return no_signal("No qualifying swing S/R level within range — skipped")
-    entry_price = round(swing_level, 6)
+    if swing_level is not None:
+        entry_price = round(swing_level, 6)
+    elif direction == "long":
+        entry_price = round(market_price - ENTRY_ATR_MULT * atr_val, 6)
+    else:
+        entry_price = round(market_price + ENTRY_ATR_MULT * atr_val, 6)
 
     # ── Signal strength: |score| / active votes → 60–95 ──────────────────────
     # Indicator-AGREEMENT strength (how cleanly the votes align), 60–95.
@@ -949,6 +962,7 @@ def analyze_pair(pair: str, candles: list,
             "expires_at":  expires_at,
             "result":      "pending",
             "close_price": None,
+            "entry_confirmed": False,   # limit order not yet filled — check_signals confirms this
             "votes_json":  votes_json,
             "note":        note,
         },
