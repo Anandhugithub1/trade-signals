@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/signal.dart';
 import '../models/market_sentiment.dart';
+import '../models/nifty_option_signal.dart';
 import '../utils/app_error.dart';
 
 class SupabaseService {
@@ -53,6 +54,22 @@ class SupabaseService {
             .order('timestamp', ascending: false);
         return data
             .map<TradeSignal>((e) => TradeSignal.fromJson(e))
+            .toList();
+      });
+
+  /// NIFTY 50 option signals from the last 90 days, newest first.
+  static Future<List<NiftyOptionSignal>> fetchNiftyOptionSignals() =>
+      _guard(() async {
+        final cutoff = DateTime.now()
+            .subtract(const Duration(days: 90))
+            .toIso8601String();
+        final data = await _db
+            .from('nifty_option_signals')
+            .select()
+            .gte('timestamp', cutoff)
+            .order('timestamp', ascending: false);
+        return data
+            .map<NiftyOptionSignal>((e) => NiftyOptionSignal.fromJson(e))
             .toList();
       });
 
