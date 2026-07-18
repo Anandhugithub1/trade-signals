@@ -26,10 +26,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
 
-    # Allow the job to commit the appended signal history back to the repo.
-    permissions:
-      contents: write
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -49,18 +45,7 @@ jobs:
           MAX_LOSS: ${{ github.event.inputs.max_loss || '1250' }}
           INTERVAL: '15m'
           PERIOD: '5d'
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         working-directory: 'nifty option trading'
         run: python src/run_signal.py
-
-      - name: Commit signal history
-        run: |
-          cd "nifty option trading"
-          if [[ -n "$(git status --porcelain signals.jsonl)" ]]; then
-            git config user.name  "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add signals.jsonl
-            git commit -m "chore: append NIFTY signal $(date -u +'%Y-%m-%dT%H:%MZ')"
-            git push
-          else
-            echo "No new signal to commit."
-          fi
