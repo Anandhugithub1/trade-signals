@@ -3,8 +3,7 @@ CI entry point (used by the GitHub Actions workflow).
 
 Fetches the latest NIFTY bars, evaluates the most recent signal, enriches it
 with the live NSE ATM premium/PCR when reachable, prints it to the workflow
-log, and appends it to signals.jsonl so the repo keeps a running history you
-can review / paper-trade against.
+log, and writes it to Supabase so the Flutter app's NIFTY Options tab shows it.
 
 Exit code is always 0 (a "no signal" is a normal outcome, not a failure).
 """
@@ -16,12 +15,17 @@ import math
 import os
 from datetime import datetime, timezone, timedelta
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+except ImportError:
+    pass
+
 from data_feed import get_index_history, get_option_chain, parse_atm_context
 from strategy import StrategyParams, add_indicators, evaluate_row
 from backtest import LOT_SIZE
 
 IST = timezone(timedelta(hours=5, minutes=30))
-HISTORY_FILE = os.path.join(os.path.dirname(__file__), "..", "signals.jsonl")
 
 
 def build_record(max_loss: float, interval: str, period: str) -> dict:
@@ -84,10 +88,6 @@ def main() -> None:
     rec = build_record(args.max_loss, args.interval, args.period)
 
     print(json.dumps(rec, indent=2))
-
-    # Append to history (one JSON object per line)
-    with open(HISTORY_FILE, "a", encoding="utf-8") as f:
-        f.write(json.dumps(rec) + "\n")
 
     if rec["signal"]:
         s = rec["signal"]
