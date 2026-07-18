@@ -468,13 +468,19 @@ def handler(event=None, context=None):
 
             log_result(result, close_price, diag, direction)
 
-            # Always update latest_price — shows current price even for pending signals
+            # Always update latest_price — shows current price even for pending signals.
+            # Also persist entry_confirmed so the app can show whether the limit
+            # order has actually been filled yet, not just guess from latest_price.
             latest = diag.get("last_close")
-            if latest is not None:
+            entry_confirmed = diag.get("entry_confirmed", False)
+            if latest is not None or entry_confirmed != signal.get("entry_confirmed", False):
+                payload = {"entry_confirmed": entry_confirmed}
+                if latest is not None:
+                    payload["latest_price"] = latest
                 _retry(
-                    lambda lp=latest: supabase.table("trade_signals")
-                        .update({"latest_price": lp}).eq("id", sid).execute(),
-                    label=f"latest_price {pair}",
+                    lambda p=payload: supabase.table("trade_signals")
+                        .update(p).eq("id", sid).execute(),
+                    label=f"latest_price/entry_confirmed {pair}",
                 )
 
             if result:

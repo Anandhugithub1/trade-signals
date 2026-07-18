@@ -55,8 +55,10 @@ re-added later without touching the voting logic.
      test_scripts/walkforward_entry_variants.py.
 
   STEP 5 — RISK
-     TP = fixed 3.5% target (matches 1h momentum swing)
-     SL = min(2× ATR, 2.3% cap), then tightened so reward:risk is never < 1:1.5
+     SL = min(2× ATR, 2.3% cap) — volatility-scaled per pair
+     TP = 2.0 × the SL distance (R-multiple), so reward:risk = 1:2 and stays
+          constant across all pairs regardless of their ATR (Turtle/Donchian/
+          CTA-standard: both barriers sized in the same ATR unit)
 
 Trigger: every 4h via GitHub Actions cron. Max 3 signals/day.
 """
@@ -180,10 +182,16 @@ MAX_SIGNALS           = 3    # insert at most this many signals per day
 ADX_TREND_MIN = 20   # ADX below this = ranging/choppy → skip (no momentum edge)
 
 # ── Momentum targets (1h timeframe, ~3–4% swing moves) ────────────────────────
-TARGET_TP_PCT = 0.035  # fixed 3.5% take-profit target
+# SL is volatility-scaled (ATR-based); TP is an R-MULTIPLE of that SL distance,
+# so reward:risk stays constant across pairs regardless of each pair's ATR —
+# the industry-standard trend-following convention (Turtle/Donchian/CTA
+# exits size both barriers in the same ATR unit). Previously TP was a FLAT
+# 3.5% while SL was ATR-scaled, which let RR drift with volatility and even
+# forced the SL to be deformed to satisfy the RR floor. TP_R_MULT is chosen on
+# principle (standard trend RR, above the old 1.5 floor), not backtest-tuned.
 ATR_SL_MULT   = 2.0    # SL = 2× ATR (gives a 1h trade room to breathe)
-MAX_SL_PCT    = 0.023  # hard SL cap → keeps reward:risk at/above the floor
-MIN_RR        = 1.5    # never generate a signal below 1 : 1.5 reward:risk
+MAX_SL_PCT    = 0.023  # hard SL cap → bounds worst-case risk per trade
+TP_R_MULT     = 2.0    # TP = 2.0 × SL distance (reward:risk = 1 : 2, ATR-consistent)
 
 # Swing support/resistance limit entry: instead of entering at raw market
 # price, prefer a fill at the nearest recent swing low (longs) / swing high
@@ -919,12 +927,14 @@ def analyze_pair(pair: str, candles: list,
     strength = max(60, min(95, int(60 + min(abs(score) / active, 1.0) * 35)))
 
     # ── SL / TP — sized off the LIVE entry price ─────────────────────────────
-    tp_dist = entry_price * TARGET_TP_PCT
+    # SL is volatility-scaled (2× ATR, capped at MAX_SL_PCT); TP is a fixed
+    # R-multiple of that SL distance, so reward:risk is constant (1 : TP_R_MULT)
+    # across every pair regardless of its ATR. No RR-floor deformation needed —
+    # RR is fixed by construction.
     sl_dist = min(ATR_SL_MULT * atr_val, entry_price * MAX_SL_PCT)
     if sl_dist <= 0:
         sl_dist = entry_price * 0.01
-    if tp_dist / sl_dist < MIN_RR:
-        sl_dist = tp_dist / MIN_RR
+    tp_dist = TP_R_MULT * sl_dist
 
     if direction == "long":
         sl = round(entry_price - sl_dist, 6)

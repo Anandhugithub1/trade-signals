@@ -97,9 +97,13 @@ class _CompactBody extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 2),
-              // Show live price if available, otherwise show entry
-              if (signal.latestPrice != null && signal.isPending)
+              // Show live price once the limit entry has filled; otherwise
+              // show the waiting-for-entry price so it's clear it's not live yet.
+              if (signal.latestPrice != null && signal.isPending && signal.entryConfirmed)
                 _LivePriceLine(signal: signal)
+              else if (signal.isPending && !signal.entryConfirmed)
+                Text('Entry (waiting)  ${fmtPrice(signal.entry)}',
+                    style: TextStyle(color: c.t2, fontSize: 12))
               else
                 Text('Entry  ${fmtPrice(signal.entry)}',
                     style: TextStyle(color: c.t2, fontSize: 12)),
@@ -161,8 +165,11 @@ class _FullBody extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 12),
-        // Live price banner — shown above price tiles for pending signals
-        if (signal.latestPrice != null && signal.isPending) ...[
+        // Entry status — waiting for the limit fill, or live price once filled.
+        if (signal.isPending && !signal.entryConfirmed) ...[
+          _EntryWaitingBanner(signal: signal),
+          const SizedBox(height: 8),
+        ] else if (signal.latestPrice != null && signal.isPending) ...[
           _LivePriceBanner(signal: signal),
           const SizedBox(height: 8),
         ],
@@ -190,7 +197,7 @@ class _FullBody extends StatelessWidget {
   }
 }
 
-// Shows WIN/LOSS badge for closed signals, confidence % for pending
+// Shows WIN/LOSS badge for closed signals, an ACTIVE badge for pending.
 class _ResultOrConfidence extends StatelessWidget {
   final TradeSignal signal;
 
@@ -205,14 +212,13 @@ class _ResultOrConfidence extends StatelessWidget {
     if (signal.isLoss) {
       return _ResultBadge(label: 'LOSS', icon: Icons.close_rounded, color: c.short);
     }
-    // Pending — show confidence
-    final color = signal.confidence >= 80
-        ? c.long
-        : signal.confidence >= 65
-            ? c.gold
-            : c.short;
-    return Text('${signal.confidence}%',
-        style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w800));
+    // Pending — distinguish "limit order waiting to fill" from "filled, active".
+    if (!signal.entryConfirmed) {
+      return _ResultBadge(
+          label: 'WAITING', icon: Icons.hourglass_empty_rounded, color: c.t2);
+    }
+    return _ResultBadge(
+        label: 'ACTIVE', icon: Icons.bolt_rounded, color: c.gold);
   }
 }
 
@@ -422,6 +428,40 @@ class _LivePriceLine extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// Full-width banner shown while the limit order hasn't filled yet.
+class _EntryWaitingBanner extends StatelessWidget {
+  final TradeSignal signal;
+  const _EntryWaitingBanner({required this.signal});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: c.t2.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: c.t2.withValues(alpha: 0.2)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.hourglass_empty_rounded, color: c.t2, size: 13),
+              const SizedBox(width: 6),
+              Text('Entry Initiated',
+                  style: TextStyle(color: c.t2, fontSize: 11, fontWeight: FontWeight.w600)),
+            ],
+          ),
+          Text('Waiting for fill',
+              style: TextStyle(color: c.t2, fontSize: 11, fontWeight: FontWeight.w700)),
+        ],
+      ),
     );
   }
 }

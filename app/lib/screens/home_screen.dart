@@ -673,15 +673,15 @@ class _FeaturedCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    '${signal.confidence}%',
+                    signal.rrLabel,
                     style: TextStyle(
                       color: color,
-                      fontSize: 26,
+                      fontSize: 22,
                       fontWeight: FontWeight.w900,
                       letterSpacing: -0.5,
                     ),
                   ),
-                  Text('strength', style: TextStyle(color: c.t3, fontSize: 11)),
+                  Text('reward : risk', style: TextStyle(color: c.t3, fontSize: 11)),
                 ],
               ),
             ],

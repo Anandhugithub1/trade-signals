@@ -48,8 +48,6 @@ class SignalDetailScreen extends StatelessWidget {
           if (!signal.isPending) _ResultBanner(signal: signal),
           if (!signal.isPending) const SizedBox(height: 14),
 
-          _ConfidenceCard(signal: signal, dirColor: dirColor),
-          const SizedBox(height: 14),
           _PriceLevelsCard(signal: signal),
           const SizedBox(height: 14),
           _RRCard(signal: signal),
@@ -159,56 +157,6 @@ class _ResultBanner extends StatelessWidget {
   }
 }
 
-class _ConfidenceCard extends StatelessWidget {
-  final TradeSignal signal;
-  final Color dirColor;
-
-  const _ConfidenceCard({required this.signal, required this.dirColor});
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-    return _Card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text('Signal Strength', style: TextStyle(color: c.t2, fontSize: 14)),
-              Text('${signal.confidence}%',
-                  style: TextStyle(
-                      color: dirColor,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800)),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: signal.confidence / 100,
-              backgroundColor: c.border,
-              valueColor: AlwaysStoppedAnimation<Color>(dirColor),
-              minHeight: 6,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            signal.confidence >= 80
-                ? 'High strength — strong setup'
-                : signal.confidence >= 65
-                    ? 'Moderate strength — trade with care'
-                    : 'Lower strength — reduce position size',
-            style:
-                TextStyle(color: dirColor.withValues(alpha: 0.75), fontSize: 12),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _PriceLevelsCard extends StatelessWidget {
   final TradeSignal signal;
 
@@ -225,13 +173,21 @@ class _PriceLevelsCard extends StatelessWidget {
               style: TextStyle(
                   color: c.t1, fontSize: 15, fontWeight: FontWeight.w700)),
           const SizedBox(height: 12),
-          // Live price row — shows current market price + unrealised P&L
-          if (signal.latestPrice != null && signal.isPending) ...[
+          // Live price row — only meaningful once the limit entry has filled
+          if (signal.latestPrice != null && signal.isPending && signal.entryConfirmed) ...[
             _LivePriceRow(signal: signal),
             Divider(height: 1, color: c.border),
           ],
           _PriceRow(label: 'Entry Price', value: fmtPrice(signal.entry), color: c.t1),
           Divider(height: 1, color: c.border),
+          if (signal.isPending) ...[
+            _PriceRow(
+              label: 'Entry Initiated',
+              value: signal.entryConfirmed ? 'Yes' : 'Waiting',
+              color: signal.entryConfirmed ? c.long : c.t2,
+            ),
+            Divider(height: 1, color: c.border),
+          ],
           _PriceRow(label: 'Stop Loss', value: fmtPrice(signal.stopLoss), color: c.short),
           Divider(height: 1, color: c.border),
           _PriceRow(label: 'Take Profit', value: fmtPrice(signal.takeProfit), color: c.long),

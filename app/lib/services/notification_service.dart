@@ -40,7 +40,7 @@ class NotificationService {
     await _plugin.show(
       signal.id.hashCode.abs() % 2147483647,
       '${signal.pair}  ·  $dirLabel',
-      'Entry $entry  ·  ${signal.confidence}% confidence  ·  Active signal',
+      'Entry $entry  ·  ${signal.rrLabel} reward:risk  ·  Active signal',
       const NotificationDetails(
         android: AndroidNotificationDetails(
           _channelId,

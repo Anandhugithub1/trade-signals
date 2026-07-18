@@ -11,6 +11,7 @@ class TradeSignal {
   final SignalResult result;
   final double? closePrice;
   final double? latestPrice;  // updated every hour by check_signals
+  final bool entryConfirmed;  // true once price has touched the limit entry
 
   const TradeSignal({
     required this.id,
@@ -25,6 +26,7 @@ class TradeSignal {
     this.result = SignalResult.pending,
     this.closePrice,
     this.latestPrice,
+    this.entryConfirmed = false,
   });
 
   factory TradeSignal.fromJson(Map<String, dynamic> j) {
@@ -41,6 +43,7 @@ class TradeSignal {
       result: _resultFromString(j['result'] as String? ?? 'pending'),
       closePrice: j['close_price'] != null ? (j['close_price'] as num).toDouble() : null,
       latestPrice: j['latest_price'] != null ? (j['latest_price'] as num).toDouble() : null,
+      entryConfirmed: j['entry_confirmed'] as bool? ?? false,
     );
   }
 
@@ -107,9 +110,10 @@ class TradeSignal {
     return (directedDiff / entry) * 100;
   }
 
-  // Live unrealised P&L % using latest_price (pending signals only)
+  // Live unrealised P&L % using latest_price (pending signals only).
+  // Only meaningful once the limit entry has actually been filled.
   double? get livePnlPercent {
-    if (latestPrice == null || !isPending) return null;
+    if (latestPrice == null || !isPending || !entryConfirmed) return null;
     final diff = latestPrice! - entry;
     final directedDiff = direction == SignalDirection.long ? diff : -diff;
     return (directedDiff / entry) * 100;
