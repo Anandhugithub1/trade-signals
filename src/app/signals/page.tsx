@@ -2,8 +2,7 @@
 import { useEffect, useState } from 'react'
 import { supabase, isConfigured } from '@/lib/supabase'
 import type { TradeSignal } from '@/types/signal'
-import SignalForm from '@/components/SignalForm'
-import { useToast, friendlyError } from '@/components/Toast'
+import { friendlyError } from '@/components/Toast'
 
 type DirFilter = 'all' | 'long' | 'short'
 type ResFilter = 'all' | 'pending' | 'win' | 'loss' | 'expired'
@@ -12,13 +11,9 @@ export default function SignalsPage() {
   const [signals, setSignals] = useState<TradeSignal[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [formOpen, setFormOpen] = useState(false)
-  const [editTarget, setEditTarget] = useState<TradeSignal | null>(null)
-  const [deleting, setDeleting] = useState<string | null>(null)
   const [dirFilter, setDirFilter] = useState<DirFilter>('all')
   const [resFilter, setResFilter] = useState<ResFilter>('all')
   const [search, setSearch] = useState('')
-  const { error: toastError, success: toastSuccess } = useToast()
 
   useEffect(() => {
     if (!isConfigured) { setLoading(false); return }
@@ -39,42 +34,6 @@ export default function SignalsPage() {
       setError(friendlyError(err))
     } finally {
       setLoading(false)
-    }
-  }
-
-  async function handleSave(data: Omit<TradeSignal, 'id'> & { id?: string }) {
-    try {
-      if (data.id) {
-        const { error } = await supabase.from('trade_signals').update(data).eq('id', data.id)
-        if (error) throw error
-        toastSuccess('Signal updated successfully.')
-      } else {
-        const { error } = await supabase
-          .from('trade_signals')
-          .insert({ ...data, id: crypto.randomUUID() })
-        if (error) throw error
-        toastSuccess('Signal created successfully.')
-      }
-      setFormOpen(false)
-      setEditTarget(null)
-      await load()
-    } catch (err) {
-      throw new Error(friendlyError(err))
-    }
-  }
-
-  async function handleDelete(id: string) {
-    if (!confirm('Delete this signal? This cannot be undone.')) return
-    setDeleting(id)
-    try {
-      const { error } = await supabase.from('trade_signals').delete().eq('id', id)
-      if (error) throw error
-      setSignals((prev) => prev.filter((s) => s.id !== id))
-      toastSuccess('Signal deleted.')
-    } catch (err) {
-      toastError(friendlyError(err))
-    } finally {
-      setDeleting(null)
     }
   }
 
@@ -107,15 +66,6 @@ export default function SignalsPage() {
             {loading ? 'Loading…' : `${signals.length} total · ${filtered.length} shown`}
           </p>
         </div>
-        <button
-          onClick={() => { setEditTarget(null); setFormOpen(true) }}
-          className="flex items-center gap-2 bg-[#6366f1] hover:bg-[#4f46e5] text-white text-sm font-bold px-4 py-2.5 rounded-lg transition-colors"
-        >
-          <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
-          </svg>
-          New Signal
-        </button>
       </div>
 
       {error && (
@@ -179,7 +129,7 @@ export default function SignalsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[#2a2a3a]">
-                {['Pair', 'Direction', 'Entry', 'Last Price', 'SL / TP', 'Strength', 'Date', 'Result', 'Note', 'Actions'].map(
+                {['Pair', 'Direction', 'Entry', 'Last Price', 'SL / TP', 'Strength', 'Date', 'Result', 'Note'].map(
                   (h) => (
                     <th
                       key={h}
@@ -195,7 +145,7 @@ export default function SignalsPage() {
               {loading ? (
                 [...Array(5)].map((_, i) => (
                   <tr key={i} className="border-b border-[#2a2a3a]/40">
-                    {[...Array(10)].map((_, j) => (
+                    {[...Array(9)].map((_, j) => (
                       <td key={j} className="px-4 py-3.5">
                         <div className="h-3.5 bg-[#2a2a3a] rounded animate-pulse" style={{ width: `${40 + j * 10}%` }} />
                       </td>
@@ -204,10 +154,10 @@ export default function SignalsPage() {
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-4 py-16 text-center">
+                  <td colSpan={9} className="px-4 py-16 text-center">
                     <p className="text-[#475569] text-sm">
                       {signals.length === 0
-                        ? 'No signals yet. Click "New Signal" to create your first one.'
+                        ? 'No signals yet. They are generated automatically by the backend.'
                         : 'No signals match your filters.'}
                     </p>
                   </td>
@@ -311,36 +261,6 @@ export default function SignalsPage() {
                         <span className="text-[#334155] text-xs">—</span>
                       )}
                     </td>
-                    <td className="px-4 py-3.5">
-                      <div className="flex items-center gap-3">
-                        <button
-                          onClick={() => { setEditTarget(s); setFormOpen(true) }}
-                          title="Edit"
-                          className="text-[#475569] hover:text-[#818cf8] transition-colors"
-                        >
-                          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={() => handleDelete(s.id)}
-                          disabled={deleting === s.id}
-                          title="Delete"
-                          className="text-[#475569] hover:text-[#ef4444] transition-colors disabled:opacity-40"
-                        >
-                          {deleting === s.id ? (
-                            <svg className="animate-spin" width="14" height="14" fill="none" viewBox="0 0 24 24">
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                            </svg>
-                          ) : (
-                            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                            </svg>
-                          )}
-                        </button>
-                      </div>
-                    </td>
                   </tr>
                 ))
               )}
@@ -348,14 +268,6 @@ export default function SignalsPage() {
           </table>
         </div>
       </div>
-
-      {formOpen && (
-        <SignalForm
-          signal={editTarget}
-          onClose={() => { setFormOpen(false); setEditTarget(null) }}
-          onSave={handleSave}
-        />
-      )}
     </div>
   )
 }

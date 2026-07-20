@@ -11,6 +11,7 @@ export interface TradeSignal {
   confidence: number
   rr_ratio?: number | null
   latest_price?: number | null
+  entry_confirmed?: boolean  // true once price has touched the limit entry
   timestamp: string
   expires_at?: string | null
   result: SignalResult
