@@ -44,20 +44,20 @@ class StrategyParams:
     ema_slow: int = 21
     rsi_period: int = 14
     rsi_mid: float = 52.0         # require stronger momentum than a flat 50
-    st_period: int = 10
+    st_period: int = 5
     st_mult: float = 3.0
     atr_period: int = 14
     # --- Industry-standard entry filters (the "improved" layer) ---
-    # Defaults below reflect a 9-month ablation study on real 15m data
-    # (see README "Research basis"): only the filters that MEASURABLY helped are
-    # on by default. ADX-rising, DI-confirm and the daily-EMA filter each hurt
-    # PF on this instrument/period, so they default OFF (but stay togglable).
+    # Defaults below reflect a 6-9mo walk-forward validation on real 15m data
+    # (independent, non-overlapping blocks -- see compare_sr_vs_trend.py /
+    # the sweep in strategy.py's git history): a faster Supertrend (period 5
+    # vs 10) + ADX>=15 gate beat the old ADX-off "max profit" config on PF
+    # and total P&L over every window checked (6mo: PF 2.72 vs 2.02,
+    # +Rs.90.5k vs +Rs.71.9k; 9mo: PF 2.11 vs 1.63, +Rs.90.2k vs +Rs.66.0k).
+    # ADX-rising, DI-confirm and the daily-EMA filter still hurt PF on this
+    # instrument/period, so they stay OFF (but remain togglable).
     adx_period: int = 14
-    # MAX-PROFIT config: ADX & time filters OFF. On 9m data this + Rs.3000 stop
-    # made the most money (+Rs.63.5k, ~Rs.7k/mo, PF 1.61). Turning ADX on trades
-    # fewer/higher-quality (lower drawdown) but LESS total profit -- enable
-    # adx_min=15 + use_time_filter if you prefer that risk-adjusted profile.
-    adx_min: float = 0.0              # 0 = ADX gate off (max profit)
+    adx_min: float = 15.0             # trend-strength gate: skip choppy/low-ADX bars
     require_adx_rising: bool = False  # ablation: too strict, cut trades & PF
     require_di_confirm: bool = False  # ablation: collapsed PF to 1.03
     htf_ema: int = 20                 # daily EMA period (used only if enabled)
@@ -65,7 +65,7 @@ class StrategyParams:
     # Time-of-day window (IST). Skip opening range & late session.
     entry_start: dtime = dtime(9, 45)
     entry_end: dtime = dtime(14, 45)
-    use_time_filter: bool = False     # off in max-profit config (see adx_min note)
+    use_time_filter: bool = False     # ablation: didn't help once ADX gate is on
     # Option-sizing / risk. Stop is RUPEE-based (see backtest.simulate_trade);
     # sl_atr_mult is kept only for the index-level display on live signals.
     sl_atr_mult: float = 1.5

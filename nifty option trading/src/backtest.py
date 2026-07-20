@@ -31,7 +31,7 @@ from __future__ import annotations
 import argparse
 import math
 from dataclasses import dataclass
-from typing import List
+from typing import Callable, List, Optional
 
 import pandas as pd
 
@@ -61,7 +61,7 @@ def simulate_trade(
     df: pd.DataFrame,
     start_i: int,
     sig: Signal,
-    p: StrategyParams,
+    p,
     max_loss: float,
     max_hold_bars: int,
     reversal_exit: bool = False,
@@ -133,11 +133,13 @@ def simulate_trade(
     outcome = "EOD/SQUAREOFF"
     exit_index = float(df.iloc[exit_i]["Close"])
 
+    has_st_dir = "st_dir" in df.columns
     for j in range(start_i + 1, hard_exit + 1):
         hi = float(df.iloc[j]["High"])
         lo = float(df.iloc[j]["Low"])
-        # st_dir only needed for reversal exit; mean-rev frames don't have it.
-        st_dir = df.iloc[j]["st_dir"] if reversal_exit else 0
+        # st_dir only needed for reversal exit; strategies without a
+        # Supertrend column (mean-rev, S/R) simply can't reversal-exit.
+        st_dir = df.iloc[j]["st_dir"] if (reversal_exit and has_st_dir) else 0
 
         # 0. Arm/advance the trailing stop using the favourable extreme so far.
         #    For a CE the best-case move is the bar HIGH; for a PE, the LOW.
@@ -165,7 +167,7 @@ def simulate_trade(
                 break
 
         # 2. Reversal exit: trend flipped against us -> book at this bar close.
-        if reversal_exit:
+        if reversal_exit and has_st_dir:
             reversed_against = (is_ce and st_dir == -1) or (
                 not is_ce and st_dir == 1
             )
@@ -210,11 +212,22 @@ def run_backtest(
     interval: str,
     max_loss: float,
     max_hold_bars: int,
-    p: StrategyParams,
+    p,
     reversal_exit: bool = False,
     source: str = "yfinance",
     months: int = 9,
+    add_indicators_fn: Optional[Callable] = None,
+    evaluate_row_fn: Optional[Callable] = None,
 ) -> List[TradeResult]:
+    """
+    add_indicators_fn/evaluate_row_fn let this harness run ANY strategy that
+    produces the shared `Signal` dataclass (see strategy_meanrev.py /
+    strategy_sr.py) -- default to the trend strategy in strategy.py so
+    existing callers are unaffected.
+    """
+    add_indicators_fn = add_indicators_fn or add_indicators
+    evaluate_row_fn = evaluate_row_fn or evaluate_row
+
     if source == "upstox":
         from upstox_feed import get_upstox_history
         # Upstox interval names differ ("15minute" vs yfinance "15m").
@@ -224,13 +237,13 @@ def run_backtest(
         df = get_upstox_history(interval=up_interval, months=months)
     else:
         df = get_index_history(period=period, interval=interval)
-    df = add_indicators(df, p)
+    df = add_indicators_fn(df, p)
 
     trades: List[TradeResult] = []
     i = 1
     n = len(df)
     while i < n:
-        sig = evaluate_row(df, i, p)
+        sig = evaluate_row_fn(df, i, p)
         if sig is not None:
             tr = simulate_trade(
                 df, i, sig, p, max_loss, max_hold_bars, reversal_exit
