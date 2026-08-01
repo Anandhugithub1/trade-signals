@@ -49,3 +49,15 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         working-directory: 'nifty option trading'
         run: python src/run_signal.py
+
+      # Close out open positions: mark win/loss/expired, record pnl_rs and
+      # closed_at. Without this every signal stays 'pending' forever and the
+      # app's win-rate / P&L cards read as empty. Runs even if generation
+      # failed, since open trades still need to be squared off.
+      - name: Check open signals
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        working-directory: 'nifty option trading'
+        run: python src/check_nifty_signals.py

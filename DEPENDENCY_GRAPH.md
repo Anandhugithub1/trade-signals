@@ -65,6 +65,11 @@ graph TD
   [backend/generate_signals/handler.py](backend/generate_signals/handler.py).
 - **check_signals** polls pending signals and marks them win/loss/expired
   once TP/SL/expiry is hit.
+- **check_nifty_signals** (`nifty option trading/src`) is the NIFTY equivalent:
+  it closes out open option signals (win/loss/expired + `pnl_rs`, `closed_at`,
+  `exit_reason`) and runs right after `run_signal.py` in the same workflow.
+  Before it existed, NIFTY signals stayed `pending` forever, so the app's
+  win-rate and P&L cards were computed over an empty set.
 - **trade_checker** is a standalone diagnostic script, not on a GitHub
   Actions schedule.
 - Both `generate_signals` and `check_signals` push notifications through

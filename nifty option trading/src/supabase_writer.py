@@ -37,10 +37,27 @@ def _client():
         return None
 
 
+MARKET_CLOSE = (15, 30)   # 15:30 IST — intraday positions are squared off here
+
+
 def _end_of_trading_day_ist(now: Optional[datetime] = None) -> str:
-    """Intraday signals expire at 15:30 IST the same day."""
+    """
+    Intraday signals expire at 15:30 IST on the next session that is still
+    open.
+
+    A signal generated at or after 15:30 IST (a late CI run, or the 10:00 UTC
+    cron that fires exactly at the close) used to get an expires_at in the
+    PAST, which made the row look already-expired the moment it was written.
+    Weekend runs had the same problem. So: if the close has already passed,
+    roll forward to the next weekday's close.
+    """
     now = now or datetime.now(IST)
-    eod = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    eod = now.replace(hour=MARKET_CLOSE[0], minute=MARKET_CLOSE[1],
+                      second=0, microsecond=0)
+    if now >= eod:
+        eod += timedelta(days=1)
+    while eod.weekday() >= 5:          # 5 = Saturday, 6 = Sunday
+        eod += timedelta(days=1)
     return eod.isoformat()
 
 
@@ -77,8 +94,15 @@ def signal_record_to_row(rec: dict) -> Optional[dict]:
         "atr": sig.get("atr"),
         "result": "pending",
         "entry_confirmed": False,
+        "exit_reason": None,
+        # timestamp = when the trade was CREATED; closed_at is filled in by
+        # check_nifty_signals when it actually exits/expires.
         "timestamp": now.isoformat(),
         "expires_at": _end_of_trading_day_ist(now),
+        "entry_at": None,
+        "closed_at": None,
+        "exit_index": None,
+        "latest_index": ctx.get("spot") or sig["index_entry"],
         "note": sig.get("note"),
     }
 

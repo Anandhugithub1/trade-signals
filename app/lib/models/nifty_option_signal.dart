@@ -29,8 +29,23 @@ class NiftyOptionSignal {
   final double? pnlRs;
   final bool entryConfirmed;
 
+  /// Why the trade closed: TARGET | STOP | REVERSAL | EOD. Null while open.
+  final String? exitReason;
+  final double? exitIndex;
+  final double? latestIndex;
+
+  /// When the trade was created (signal fired).
   final DateTime timestamp;
+
+  /// When the trade will be / was squared off.
   final DateTime? expiresAt;
+
+  /// When entry actually filled — null while the limit is still unfilled.
+  final DateTime? entryAt;
+
+  /// When the trade actually closed. Null while still open.
+  final DateTime? closedAt;
+
   final String? note;
 
   const NiftyOptionSignal({
@@ -50,8 +65,13 @@ class NiftyOptionSignal {
     this.result = OptionResult.pending,
     this.pnlRs,
     this.entryConfirmed = false,
+    this.exitReason,
+    this.exitIndex,
+    this.latestIndex,
     required this.timestamp,
     this.expiresAt,
+    this.entryAt,
+    this.closedAt,
     this.note,
   });
 
@@ -77,12 +97,26 @@ class NiftyOptionSignal {
       result: _resultFromString(j['result'] as String? ?? 'pending'),
       pnlRs: j['pnl_rs'] != null ? (j['pnl_rs'] as num).toDouble() : null,
       entryConfirmed: j['entry_confirmed'] as bool? ?? false,
-      timestamp: DateTime.parse(j['timestamp'] as String),
-      expiresAt: j['expires_at'] != null
-          ? DateTime.parse(j['expires_at'] as String)
+      exitReason: j['exit_reason'] as String?,
+      exitIndex:
+          j['exit_index'] != null ? (j['exit_index'] as num).toDouble() : null,
+      latestIndex: j['latest_index'] != null
+          ? (j['latest_index'] as num).toDouble()
           : null,
+      timestamp: _parseTime(j['timestamp'])!,
+      expiresAt: _parseTime(j['expires_at']),
+      entryAt: _parseTime(j['entry_at']),
+      closedAt: _parseTime(j['closed_at']),
       note: j['note'] as String?,
     );
+  }
+
+  /// Supabase returns timestamptz; the backend writes IST-offset strings.
+  /// Parse to local time so "created 10:15 AM" reads correctly on-device
+  /// instead of showing a raw UTC instant.
+  static DateTime? _parseTime(dynamic v) {
+    if (v == null) return null;
+    return DateTime.parse(v as String).toLocal();
   }
 
   static OptionResult _resultFromString(String r) {
@@ -125,9 +159,77 @@ class NiftyOptionSignal {
     if (expiresAt == null) return '';
     final left = expiresAt!.difference(DateTime.now());
     if (left.isNegative) return 'Squared off';
-    if (left.inHours < 1) return 'Exits in <1h';
+    if (left.inMinutes < 60) return 'Exits in ${left.inMinutes}m';
     if (left.inHours < 24) return 'Exits in ${left.inHours}h';
-    return 'Exits today';
+    return 'Exits ${_dayLabel(expiresAt!)}';
+  }
+
+  // ---- Trade lifecycle timestamps ----
+
+  /// "1 Aug, 10:15 AM" — when the trade was created.
+  String get createdLabel => _fmtDateTime(timestamp);
+
+  /// When the trade closed, or the scheduled square-off while still open.
+  String get closedLabel {
+    if (closedAt != null) return _fmtDateTime(closedAt!);
+    if (expiresAt != null) return _fmtDateTime(expiresAt!);
+    return '—';
+  }
+
+  /// When entry actually filled, or a placeholder while unfilled.
+  String get entryAtLabel =>
+      entryAt != null ? _fmtDateTime(entryAt!) : 'Not filled';
+
+  /// How long the trade was held, e.g. "1h 45m". Empty while open.
+  String get holdDurationLabel {
+    final start = entryAt ?? timestamp;
+    final end = closedAt;
+    if (end == null) return '';
+    final d = end.difference(start);
+    if (d.isNegative) return '';
+    final h = d.inHours;
+    final m = d.inMinutes % 60;
+    return h > 0 ? '${h}h ${m}m' : '${m}m';
+  }
+
+  /// Human label for how the trade ended.
+  String get exitReasonLabel {
+    switch (exitReason) {
+      case 'TARGET':
+        return 'Target hit';
+      case 'STOP':
+        return 'Stop-loss hit';
+      case 'REVERSAL':
+        return 'Trend reversed';
+      case 'EOD':
+        return 'Squared off at close';
+      default:
+        return isPending ? 'Open' : result.name.toUpperCase();
+    }
+  }
+
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+
+  static String _dayLabel(DateTime d) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final that = DateTime(d.year, d.month, d.day);
+    final diff = that.difference(today).inDays;
+    if (diff == 0) return 'today';
+    if (diff == 1) return 'tomorrow';
+    if (diff == -1) return 'yesterday';
+    return '${d.day} ${_months[d.month - 1]}';
+  }
+
+  static String _fmtDateTime(DateTime d) {
+    final h24 = d.hour;
+    final ampm = h24 >= 12 ? 'PM' : 'AM';
+    final h = h24 % 12 == 0 ? 12 : h24 % 12;
+    final m = d.minute.toString().padLeft(2, '0');
+    return '${d.day} ${_months[d.month - 1]}, $h:$m $ampm';
   }
 }
 

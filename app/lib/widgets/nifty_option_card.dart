@@ -135,8 +135,76 @@ class NiftyOptionCard extends StatelessWidget {
                   ),
               ],
             ),
+
+            // Lifecycle: when the trade was created and when it ended.
+            const SizedBox(height: 10),
+            Divider(height: 1, color: c.border),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                _TimeCol(
+                  label: 'CREATED',
+                  value: signal.createdLabel,
+                ),
+                _TimeCol(
+                  label: signal.isPending ? 'EXPIRES' : 'CLOSED',
+                  value: signal.closedLabel,
+                  // Once closed, say *why* it ended and how long it ran.
+                  sub: signal.isPending
+                      ? null
+                      : [
+                          signal.exitReasonLabel,
+                          if (signal.holdDurationLabel.isNotEmpty)
+                            signal.holdDurationLabel,
+                        ].join(' · '),
+                ),
+              ],
+            ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// One half of the created/closed footer row.
+class _TimeCol extends StatelessWidget {
+  final String label;
+  final String value;
+  final String? sub;
+
+  const _TimeCol({required this.label, required this.value, this.sub});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: c.t3,
+              fontSize: 9,
+              letterSpacing: 0.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(
+                color: c.t2, fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+          if (sub != null) ...[
+            const SizedBox(height: 1),
+            Text(
+              sub!,
+              style: TextStyle(color: c.t3, fontSize: 10),
+            ),
+          ],
+        ],
       ),
     );
   }

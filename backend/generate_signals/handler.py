@@ -918,13 +918,24 @@ def analyze_pair(pair: str, candles: list,
     else:
         entry_price = round(market_price + ENTRY_ATR_MULT * atr_val, 6)
 
-    # ── Signal strength: |score| / active votes → 60–95 ──────────────────────
+    # ── Signal strength: net agreement across ALL voters → 60–95 ─────────────
     # Indicator-AGREEMENT strength (how cleanly the votes align), 60–95.
     # NOT a win probability — backtests show it doesn't predict win rate.
-    # Kept for internal ranking (Pass 2 picks the highest) and expiry sizing;
+    # Used for internal ranking (Pass 2 picks the highest) and expiry sizing;
     # the user-facing app no longer displays it as a confidence %.
-    active   = len([v for v in votes if v[1] != 0]) or 1
-    strength = max(60, min(95, int(60 + min(abs(score) / active, 1.0) * 35)))
+    #
+    # The denominator is every vote that COULD have fired, not just the ones
+    # that did. Dividing by non-zero votes only (the previous behaviour) made
+    # the metric degenerate: a +4 score with 4 active voters scored a perfect
+    # 95, beating a far broader +9-with-10-voters setup at 91, because the
+    # ratio saturates the moment every active voter happens to agree. That
+    # inverted the ranking — thin, low-conviction signals with many abstentions
+    # were consistently picked over strongly-confirmed ones, and they also
+    # sailed past MIN_SIGNAL_STRENGTH. Counting abstentions in the denominator
+    # makes an abstaining indicator dilute conviction instead of concentrating
+    # it, so breadth of agreement is what actually scores well.
+    total_voters = len([v for v in votes if v[0] != "Regime"]) or 1
+    strength = max(60, min(95, int(60 + min(abs(score) / total_voters, 1.0) * 35)))
 
     # ── SL / TP — sized off the LIVE entry price ─────────────────────────────
     # SL is volatility-scaled (2× ATR, capped at MAX_SL_PCT); TP is a fixed

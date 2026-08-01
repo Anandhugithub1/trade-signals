@@ -35,17 +35,37 @@ CREATE TABLE IF NOT EXISTS public.nifty_option_signals (
     result            text        NOT NULL DEFAULT 'pending',  -- pending | win | loss | expired
     pnl_rs            numeric,                         -- realised P&L in rupees once closed
     entry_confirmed   boolean     NOT NULL DEFAULT false,
+    exit_reason       text,                            -- TARGET | STOP | REVERSAL | EOD (null while open)
 
     -- Timing (intraday: expires end of the same trading day)
-    timestamp         timestamptz NOT NULL DEFAULT now(),
-    expires_at        timestamptz,
+    timestamp         timestamptz NOT NULL DEFAULT now(),   -- when the trade was CREATED
+    expires_at        timestamptz,                          -- when it will be squared off
+    entry_at          timestamptz,                          -- when entry was actually filled
+    closed_at         timestamptz,                          -- when it actually EXPIRED / exited
+
+    -- Exit detail (mirrors trade_signals.close_price / latest_price)
+    exit_index        numeric,                         -- index level the trade exited at
+    latest_index      numeric,                         -- last seen index level (live, while pending)
 
     note              text                             -- main reason for the signal
 );
 
+-- Existing installs: add the lifecycle columns without recreating the table.
+ALTER TABLE public.nifty_option_signals
+    ADD COLUMN IF NOT EXISTS exit_reason  text,
+    ADD COLUMN IF NOT EXISTS entry_at     timestamptz,
+    ADD COLUMN IF NOT EXISTS closed_at    timestamptz,
+    ADD COLUMN IF NOT EXISTS exit_index   numeric,
+    ADD COLUMN IF NOT EXISTS latest_index numeric;
+
 -- Newest-first queries by time (the app fetches last 90 days ordered desc).
 CREATE INDEX IF NOT EXISTS nifty_option_signals_timestamp_idx
     ON public.nifty_option_signals (timestamp DESC);
+
+-- check_nifty_signals scans open rows every 15 min.
+CREATE INDEX IF NOT EXISTS nifty_option_signals_pending_idx
+    ON public.nifty_option_signals (result)
+    WHERE result = 'pending';
 
 -- ---------------------------------------------------------------------
 -- Row-Level Security: public READ only. The backend writes with the
