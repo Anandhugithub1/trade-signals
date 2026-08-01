@@ -83,7 +83,8 @@ class _NiftyOptionsScreenState extends State<NiftyOptionsScreen> {
                 children: [
                   _buildHeader(c, stats),
                   const SizedBox(height: 12),
-                  const DisclaimerBanner(),
+                  const DisclaimerBanner(
+                      message: DisclaimerBanner.optionsMessage),
                   const SizedBox(height: 12),
                   _buildPnlCard(c, stats),
                   const SizedBox(height: 12),

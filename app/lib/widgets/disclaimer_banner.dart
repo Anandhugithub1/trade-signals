@@ -2,7 +2,21 @@ import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 
 class DisclaimerBanner extends StatelessWidget {
-  const DisclaimerBanner({super.key});
+  /// Risk text to show. Defaults to the crypto wording; the NIFTY options
+  /// tab passes its own, since "Crypto is highly volatile" is simply wrong
+  /// on a screen that only ever shows NSE index options.
+  final String message;
+
+  const DisclaimerBanner({super.key, this.message = cryptoMessage});
+
+  static const cryptoMessage =
+      'Crypto is highly volatile. Never risk more than 2–3% of capital '
+      'per trade. Signals are not financial advice.';
+
+  static const optionsMessage =
+      'Options can expire worthless — you can lose the entire premium. '
+      'Never risk more than 2–3% of capital per trade. Signals are not '
+      'financial advice.';
 
   static const _amber = Color(0xFFF59E0B);
   static const _amberBg = Color(0xFF2A1F0A);
@@ -50,7 +64,7 @@ class DisclaimerBanner extends StatelessWidget {
                     const SizedBox(width: 9),
                     Expanded(
                       child: Text(
-                        'Crypto is highly volatile. Never risk more than 2–3% of capital per trade. Signals are not financial advice.',
+                        message,
                         style: TextStyle(
                           color: c.t2,
                           fontSize: 12,

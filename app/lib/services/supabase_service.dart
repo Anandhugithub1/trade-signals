@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/signal.dart';
 import '../models/market_sentiment.dart';
@@ -31,11 +34,25 @@ class SupabaseService {
         _       => e.message,
       };
       throw ServerError(msg, code: e.code);
+    } on TypeError catch (e) {
+      // A cast/shape mismatch while decoding a row — e.g. the app expects a
+      // column the database doesn't have yet because a migration hasn't been
+      // applied. This is NOT a connectivity problem, and must not fall through
+      // to the string-matching below: those heuristics match substrings like
+      // "timeout" anywhere in the text, so a schema error used to render as
+      // "No Connection" and send you chasing your network instead of the DB.
+      throw DataError('Unexpected data shape — $e');
     } catch (e) {
+      // Only treat it as a network failure when the exception TYPE says so.
+      // Matching on message text alone produced false positives.
+      if (e is SocketException || e is TimeoutException) {
+        throw const NetworkError();
+      }
       final s = e.toString().toLowerCase();
-      if (s.contains('socket') || s.contains('network') ||
-          s.contains('host lookup') || s.contains('connection refused') ||
-          s.contains('timeout') || s.contains('no address associated')) {
+      if (s.contains('socket') || s.contains('failed host lookup') ||
+          s.contains('connection refused') ||
+          s.contains('connection closed') ||
+          s.contains('no address associated')) {
         throw const NetworkError();
       }
       throw AppError(e.toString());

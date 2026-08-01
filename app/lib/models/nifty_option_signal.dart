@@ -85,25 +85,24 @@ class NiftyOptionSignal {
       strikeStyle: (j['strike_style'] as String?) ?? 'ATM',
       premium: j['premium'] != null ? (j['premium'] as num).toDouble() : null,
       lots: j['lots'] != null ? (j['lots'] as num).toInt() : 1,
-      spot: (j['spot'] as num).toDouble(),
-      indexEntry: (j['index_entry'] as num).toDouble(),
-      indexStop: (j['index_stop'] as num).toDouble(),
-      indexTarget: j['index_target'] != null
-          ? (j['index_target'] as num).toDouble()
-          : null,
-      maxLossRs: (j['max_loss_rs'] as num).toDouble(),
-      rsi: j['rsi'] != null ? (j['rsi'] as num).toDouble() : null,
-      atr: j['atr'] != null ? (j['atr'] as num).toDouble() : null,
+      spot: _num(j['spot']) ?? 0,
+      indexEntry: _num(j['index_entry']) ?? 0,
+      indexStop: _num(j['index_stop']) ?? 0,
+      indexTarget: _num(j['index_target']),
+      maxLossRs: _num(j['max_loss_rs']) ?? 0,
+      rsi: _num(j['rsi']),
+      atr: _num(j['atr']),
       result: _resultFromString(j['result'] as String? ?? 'pending'),
       pnlRs: j['pnl_rs'] != null ? (j['pnl_rs'] as num).toDouble() : null,
       entryConfirmed: j['entry_confirmed'] as bool? ?? false,
+      // These columns ship with the exit-tracking migration. Reading them
+      // defensively means an app build that predates the migration (or a DB
+      // that hasn't had it applied yet) still renders the feed instead of
+      // throwing and surfacing as a bogus "No Connection".
       exitReason: j['exit_reason'] as String?,
-      exitIndex:
-          j['exit_index'] != null ? (j['exit_index'] as num).toDouble() : null,
-      latestIndex: j['latest_index'] != null
-          ? (j['latest_index'] as num).toDouble()
-          : null,
-      timestamp: _parseTime(j['timestamp'])!,
+      exitIndex: _num(j['exit_index']),
+      latestIndex: _num(j['latest_index']),
+      timestamp: _parseTime(j['timestamp']) ?? DateTime.now(),
       expiresAt: _parseTime(j['expires_at']),
       entryAt: _parseTime(j['entry_at']),
       closedAt: _parseTime(j['closed_at']),
@@ -111,12 +110,20 @@ class NiftyOptionSignal {
     );
   }
 
+  /// Tolerant numeric read — Supabase can hand back numerics as num or as a
+  /// string depending on column type, and the key may be absent entirely.
+  static double? _num(dynamic v) {
+    if (v == null) return null;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString());
+  }
+
   /// Supabase returns timestamptz; the backend writes IST-offset strings.
   /// Parse to local time so "created 10:15 AM" reads correctly on-device
   /// instead of showing a raw UTC instant.
   static DateTime? _parseTime(dynamic v) {
     if (v == null) return null;
-    return DateTime.parse(v as String).toLocal();
+    return DateTime.tryParse(v.toString())?.toLocal();
   }
 
   static OptionResult _resultFromString(String r) {
