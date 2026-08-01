@@ -29,6 +29,10 @@ class SupabaseService {
       // Map common Supabase PG error codes to friendly messages
       final msg = switch (e.code) {
         '42P01' => 'Table not found — run the Supabase setup SQL.',
+        // Undefined column: the app is newer than the database. Name the fix
+        // explicitly — this used to surface as a raw Postgres string.
+        '42703' => 'Database is missing a column the app expects — apply the '
+            'latest schema SQL (nifty_option_signals.sql).',
         '23505' => 'Duplicate entry — this record already exists.',
         '42501' => 'Permission denied — check Row Level Security policies.',
         _       => e.message,

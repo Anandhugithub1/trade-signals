@@ -1,5 +1,8 @@
 class SupabaseConfig {
-  static const url = 'https://your-project.supabase.co';
+  // Must match the project the anonKey below was issued for (its JWT "ref"
+  // claim). A placeholder here fails DNS on-device, which surfaces as
+  // "No connection — check your internet" and looks like a network fault.
+  static const url = 'https://ndukwedjdqonulhwajmu.supabase.co';
 
   // Anon key — safe to embed in mobile (Row Level Security enforces access).
   // Never use the service_role key here.
