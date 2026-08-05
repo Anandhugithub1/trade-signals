@@ -35,6 +35,9 @@ import pandas as pd
 
 from indicators import ema, rsi, supertrend, atr, adx
 
+# NIFTY cash session close (IST) — intraday positions square off here.
+MARKET_CLOSE = dtime(15, 30)
+
 
 # ----------------------------- Parameters --------------------------------- #
 
@@ -66,6 +69,32 @@ class StrategyParams:
     entry_start: dtime = dtime(9, 45)
     entry_end: dtime = dtime(14, 45)
     use_time_filter: bool = False     # ablation: didn't help once ADX gate is on
+    # Minimum minutes left before the 15:30 square-off to still take a trade.
+    # A position opened at 15:15 has one bar to work before it is closed flat,
+    # so it is a coin-flip on EOD drift rather than the strategy's edge.
+    # Unlike use_time_filter (an ablation that gates the whole session), this
+    # only trims the tail where the trade has no room to play out.
+    # FREE: on 60d of real 15m data this removed 1 trade and changed total P&L
+    # by Rs.0 (the trade was booked flat at EOD anyway) while nudging win rate
+    # 50.0 -> 51.9%. On by default.
+    min_minutes_to_close: int = 30
+
+    # Require the trigger bar and the bar before it to be in the SAME session.
+    # At 09:15 the "previous bar" is the prior session's close (18-66h earlier),
+    # so an overnight gap reads as an intrabar RSI cross. That artifact produced
+    # 32% of all triggers (11 of 34) on 60d of real data.
+    #
+    # DEFAULT OFF, and that is a deliberate, uncomfortable call: those gap
+    # triggers were PROFITABLE over this window. Enabling the guard raises win
+    # rate 50.0 -> 55.6% and PF 3.78 -> 4.37, but cuts total P&L from Rs.41,538
+    # to Rs.28,247 -- it removes the artifact and Rs.13.3k of profit with it.
+    #
+    # Turning it on is defensible (the signal's stated logic is momentum, not
+    # gap-chasing, and 11 trades in one 60-day window is thin evidence for
+    # keeping a known artifact). Turning it off is what the measured P&L
+    # supports. Left off so live behaviour matches the numbers the strategy was
+    # validated on; flip to True to trade only clean intraday momentum.
+    require_same_session: bool = False
     # Option-sizing / risk. Stop is RUPEE-based (see backtest.simulate_trade);
     # sl_atr_mult is kept only for the index-level display on live signals.
     sl_atr_mult: float = 1.5
@@ -144,6 +173,22 @@ def evaluate_row(
     if (pd.isna(row["atr"]) or pd.isna(row["rsi"]) or pd.isna(row["ema_slow"])
             or pd.isna(row["adx"])):
         return None
+
+    # --- Session-boundary guard (opt-in; see require_same_session) ---------
+    ts_now = df.index[i]
+    ts_prev = df.index[i - 1]
+    if p.require_same_session and getattr(ts_now, "date", None):
+        if ts_now.date() != ts_prev.date():
+            return None
+
+    # Don't open an intraday position so late it cannot reach its target
+    # before the 15:30 square-off; it would just be booked flat at EOD.
+    if p.min_minutes_to_close > 0 and getattr(ts_now, "time", None):
+        t = ts_now.time()
+        mins_left = (MARKET_CLOSE.hour * 60 + MARKET_CLOSE.minute) - (
+            t.hour * 60 + t.minute)
+        if mins_left < p.min_minutes_to_close:
+            return None
 
     close = float(row["Close"])
     _atr = float(row["atr"])

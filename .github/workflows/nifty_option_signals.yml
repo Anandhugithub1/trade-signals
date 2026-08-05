@@ -6,14 +6,26 @@ name: NIFTY Option Signals
 # We run every 15 minutes across that window, Monday-Friday.
 # NOTE: GitHub's scheduled runs can be delayed by several minutes under load,
 # and skip on public-repo inactivity after ~60 days — treat timing as approximate.
+#
+# The job has TWO steps with different windows:
+#   run_signal.py         only generates inside 09:15-15:30 IST (it self-gates,
+#                         so a delayed run cannot post an untradeable signal).
+#   check_nifty_signals.py must ALSO run at/after the close to square off open
+#                         positions — which is why the 10:00 UTC (15:30 IST)
+#                         slot stays. Generation no-ops there by design; the
+#                         square-off is the whole point of that run.
 on:
   schedule:
     # 03:45-03:59 UTC (covers the 09:15 IST open)
     - cron: '45,59 3 * * 1-5'
     # 04:00-09:59 UTC every 15 min (09:30-15:29 IST)
     - cron: '0,15,30,45 4-9 * * 1-5'
-    # 10:00 UTC (15:30 IST close)
+    # 10:00 UTC (15:30 IST close) — square-off run; generation self-skips.
     - cron: '0 10 * * 1-5'
+    # 10:15 UTC (15:45 IST) — safety net: if the 10:00 run was delayed or
+    # dropped, open trades still get squared off the same day rather than
+    # hanging until the next morning.
+    - cron: '15 10 * * 1-5'
   workflow_dispatch:            # manual "Run workflow" button
     inputs:
       max_loss:
@@ -40,7 +52,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r "nifty option trading/requirements.txt"
 
-      - name: Generate signal
+      # Self-gates on market hours: outside 09:15-15:30 IST this prints
+      # "Market closed" and exits 0. That is expected on the close-time run.
+      - name: Generate signal (skips outside market hours)
         env:
           MAX_LOSS: ${{ github.event.inputs.max_loss || '1250' }}
           INTERVAL: '15m'
