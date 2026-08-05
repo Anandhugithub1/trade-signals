@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS public.nifty_option_signals (
     side              text        NOT NULL,          -- 'CE' (bullish) or 'PE' (bearish)
     strike            integer,                        -- e.g. 24000 (null until chain resolves)
     strike_style      text        DEFAULT 'ATM',      -- 'ITM' | 'ATM' | 'OTM'
-    premium           numeric,                        -- entry premium per unit (LTP)
+    premium           numeric,                        -- entry premium per unit (LTP, null if NSE blocked)
+    option_expiry     date,                            -- weekly contract expiry (Tuesday)
+    instrument        text,                            -- ready-to-trade label, e.g. 'NIFTY 24400 CE 12 Aug'
     lots              integer     DEFAULT 1,
 
     -- Index levels the signal is based on (NIFTY spot)
@@ -52,11 +54,13 @@ CREATE TABLE IF NOT EXISTS public.nifty_option_signals (
 
 -- Existing installs: add the lifecycle columns without recreating the table.
 ALTER TABLE public.nifty_option_signals
-    ADD COLUMN IF NOT EXISTS exit_reason  text,
-    ADD COLUMN IF NOT EXISTS entry_at     timestamptz,
-    ADD COLUMN IF NOT EXISTS closed_at    timestamptz,
-    ADD COLUMN IF NOT EXISTS exit_index   numeric,
-    ADD COLUMN IF NOT EXISTS latest_index numeric;
+    ADD COLUMN IF NOT EXISTS exit_reason   text,
+    ADD COLUMN IF NOT EXISTS entry_at      timestamptz,
+    ADD COLUMN IF NOT EXISTS closed_at     timestamptz,
+    ADD COLUMN IF NOT EXISTS exit_index    numeric,
+    ADD COLUMN IF NOT EXISTS latest_index  numeric,
+    ADD COLUMN IF NOT EXISTS option_expiry date,
+    ADD COLUMN IF NOT EXISTS instrument    text;
 
 -- Newest-first queries by time (the app fetches last 90 days ordered desc).
 CREATE INDEX IF NOT EXISTS nifty_option_signals_timestamp_idx

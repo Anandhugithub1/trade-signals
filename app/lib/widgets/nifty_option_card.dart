@@ -69,31 +69,74 @@ class NiftyOptionCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 4),
 
-            // Level tiles: entry / stop / premium
+            // What CE/PE actually means, so the side is never ambiguous.
+            Text(
+              signal.sideExplainer,
+              style: TextStyle(color: c.t3, fontSize: 11),
+            ),
+            const SizedBox(height: 10),
+
+            // The order to place, in plain words.
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: color.withValues(alpha: 0.25)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    signal.actionLabel,
+                    style: TextStyle(
+                      color: c.t1,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    signal.hasPremium
+                        ? 'Premium ${signal.premiumLabel} · outlay ${signal.outlayLabel}'
+                        : 'Premium: check your broker for the live quote',
+                    style: TextStyle(color: c.t3, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // Index levels that drive the trade: entry, stop, target.
             Row(
               children: [
                 _Tile(
-                  label: 'INDEX ENTRY',
+                  label: 'ENTRY',
                   value: signal.indexEntry.toStringAsFixed(0),
                   valueColor: c.t1,
                 ),
                 const SizedBox(width: 8),
                 _Tile(
-                  label: 'STOP (₹)',
-                  value: '₹${signal.maxLossRs.toStringAsFixed(0)}',
+                  label: 'STOP',
+                  value: signal.indexStop.toStringAsFixed(0),
                   valueColor: c.short,
                 ),
                 const SizedBox(width: 8),
                 _Tile(
-                  label: signal.premium != null ? 'PREMIUM' : 'STYLE',
-                  value: signal.premium != null
-                      ? '₹${signal.premium!.toStringAsFixed(0)}'
-                      : signal.strikeStyle,
-                  valueColor: c.accent,
+                  label: 'TARGET',
+                  value: signal.indexTarget?.toStringAsFixed(0) ?? '—',
+                  valueColor: c.long,
                 ),
               ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Max loss ₹${signal.maxLossRs.toStringAsFixed(0)} · '
+              'index levels, not premium',
+              style: TextStyle(color: c.t3, fontSize: 10),
             ),
             const SizedBox(height: 10),
 

@@ -13,6 +13,14 @@ class NiftyOptionSignal {
   final int? strike;
   final String strikeStyle; // ITM | ATM | OTM
   final double? premium;
+
+  /// Weekly contract expiry (the Tuesday the option settles) — distinct from
+  /// [expiresAt], which is when this intraday signal is squared off.
+  final DateTime? optionExpiry;
+
+  /// Broker-ready label written by the backend, e.g. "NIFTY 24400 CE 12 Aug".
+  final String? instrument;
+
   final int lots;
 
   // Index (NIFTY spot) levels the signal is based on
@@ -54,6 +62,8 @@ class NiftyOptionSignal {
     this.strike,
     this.strikeStyle = 'ATM',
     this.premium,
+    this.optionExpiry,
+    this.instrument,
     this.lots = 1,
     required this.spot,
     required this.indexEntry,
@@ -81,10 +91,12 @@ class NiftyOptionSignal {
       side: (j['side'] as String).toUpperCase() == 'PE'
           ? OptionSide.pe
           : OptionSide.ce,
-      strike: j['strike'] != null ? (j['strike'] as num).toInt() : null,
+      strike: _num(j['strike'])?.toInt(),
       strikeStyle: (j['strike_style'] as String?) ?? 'ATM',
-      premium: j['premium'] != null ? (j['premium'] as num).toDouble() : null,
-      lots: j['lots'] != null ? (j['lots'] as num).toInt() : 1,
+      premium: _num(j['premium']),
+      optionExpiry: _parseTime(j['option_expiry']),
+      instrument: j['instrument'] as String?,
+      lots: _num(j['lots'])?.toInt() ?? 1,
       spot: _num(j['spot']) ?? 0,
       indexEntry: _num(j['index_entry']) ?? 0,
       indexStop: _num(j['index_stop']) ?? 0,
@@ -148,12 +160,42 @@ class NiftyOptionSignal {
   String get sideLabel => side == OptionSide.ce ? 'BUY CE' : 'BUY PE';
   String get directionLabel => isBullish ? 'Bullish' : 'Bearish';
 
-  /// e.g. "NIFTY 24000 CE" or "NIFTY CE (ATM)" if strike not yet resolved.
+  /// The exact contract to buy, e.g. "NIFTY 24400 CE 12 Aug".
+  /// Prefers the backend's broker-ready label; falls back to composing one.
   String get instrumentLabel {
+    if (instrument != null && instrument!.isNotEmpty) return instrument!;
     final t = side == OptionSide.ce ? 'CE' : 'PE';
-    if (strike != null) return 'NIFTY $strike $t';
-    return 'NIFTY $t ($strikeStyle)';
+    if (strike == null) return 'NIFTY $t ($strikeStyle)';
+    final exp = optionExpiry == null
+        ? ''
+        : ' ${optionExpiry!.day} ${_months[optionExpiry!.month - 1]}';
+    return 'NIFTY $strike $t$exp';
   }
+
+  /// One-line plain-English instruction, e.g.
+  /// "Buy 1 lot (75) of NIFTY 24400 CE 12 Aug — bullish on NIFTY".
+  String get actionLabel {
+    final qty = lots == 1 ? '1 lot' : '$lots lots';
+    final units = lotSize * lots;
+    return 'Buy $qty ($units) of $instrumentLabel';
+  }
+
+  /// Why this side — spells out CE-vs-PE rather than assuming it's known.
+  String get sideExplainer => side == OptionSide.ce
+      ? 'CE (Call) — profits if NIFTY rises'
+      : 'PE (Put) — profits if NIFTY falls';
+
+  /// Premium is only known when NSE's chain was reachable at signal time.
+  bool get hasPremium => premium != null;
+
+  String get premiumLabel => premium == null
+      ? 'Check broker'
+      : '₹${premium!.toStringAsFixed(1)}';
+
+  /// Total rupees to pay for the position, when premium is known.
+  String get outlayLabel => premiumOutlay == null
+      ? '—'
+      : '₹${premiumOutlay!.toStringAsFixed(0)}';
 
   /// Approximate premium outlay to buy the position (per unit x 75 x lots).
   static const int lotSize = 75;

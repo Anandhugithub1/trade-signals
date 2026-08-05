@@ -114,8 +114,14 @@ def evaluate_signal(row: dict, bars: pd.DataFrame, now: datetime) -> Optional[di
         move = (exit_index - entry) if is_ce else (entry - exit_index)
         return round(move * rs_per_point, 2)
 
-    # Only bars at/after the signal bar matter.
+    # Only bars at/after the signal bar, and NEVER past the square-off time.
+    # These are intraday positions: without the upper bound the scan ran on
+    # into later sessions, so a 31-Jul signal could "hit target" on a 3-Aug
+    # bar and book a win on a trade that was actually squared off flat days
+    # earlier. Bounding the window is what makes the result match the trade.
     window = bars[bars.index >= created]
+    if expires is not None:
+        window = window[window.index <= expires]
     if window.empty:
         # No bars yet (fresh signal, or yfinance hasn't published the bar).
         # Still expire it if the session is over, so it can't hang forever.

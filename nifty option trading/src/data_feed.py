@@ -153,6 +153,49 @@ def parse_atm_context(chain: dict) -> Optional[dict]:
 STRIKE_STEP = 50
 
 
+def atm_strike_from_spot(spot: float) -> int:
+    """
+    Nearest 50-point strike to spot.
+
+    The NSE strike grid is fixed, so the ATM strike is a pure function of the
+    index level -- no option chain needed. This is what lets a signal still
+    name a real contract when NSE blocks us (which is the norm from GitHub
+    Actions: the option-chain endpoint rejects cloud IPs, so parse_atm_context
+    returns None and strike/premium used to be written as NULL).
+    """
+    return int(round(spot / STRIKE_STEP) * STRIKE_STEP)
+
+
+def strike_for_style(spot: float, side: str, style: str = "ATM") -> int:
+    """Resolve the exact strike to buy from spot alone (see select_strike)."""
+    atm = atm_strike_from_spot(spot)
+    style = (style or "ATM").upper()
+    if style == "ATM":
+        return atm
+    if side.upper() == "CE":
+        return atm - STRIKE_STEP if style == "ITM" else atm + STRIKE_STEP
+    return atm + STRIKE_STEP if style == "ITM" else atm - STRIKE_STEP
+
+
+def next_weekly_expiry(now=None) -> "date":
+    """
+    Next NIFTY weekly expiry (Tuesday since the Sep-2025 revision).
+
+    Same-day before 15:30 IST counts as this week's expiry; at/after the close
+    it rolls to the following week. Exchange holidays can shift an expiry
+    earlier -- we do not model the holiday calendar, so treat this as the
+    expected expiry and verify on the broker for holiday-shortened weeks.
+    """
+    from datetime import datetime, timedelta, timezone, date as _date
+    ist = timezone(timedelta(hours=5, minutes=30))
+    now = now or datetime.now(ist)
+    EXPIRY_WEEKDAY = 1                      # Mon=0, Tue=1
+    ahead = (EXPIRY_WEEKDAY - now.weekday()) % 7
+    if ahead == 0 and now.hour * 60 + now.minute >= 15 * 60 + 30:
+        ahead = 7
+    return (now + timedelta(days=ahead)).date()
+
+
 def select_strike(ctx: dict, side: str, style: str = "ATM") -> Optional[dict]:
     """
     Pick WHICH call/put to buy for a signal.

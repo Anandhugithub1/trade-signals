@@ -70,22 +70,39 @@ def signal_record_to_row(rec: dict) -> Optional[dict]:
     if not sig:
         return None
 
+    from data_feed import strike_for_style, next_weekly_expiry
+
     ctx = rec.get("live_chain") or {}
     side = sig["side"]
-    strike = ctx.get("atm_strike")
+    spot = ctx.get("spot") or sig["index_entry"]
+
+    # Strike: prefer the live chain, but ALWAYS fall back to computing it from
+    # spot. NSE blocks the option-chain endpoint from GitHub Actions IPs, so
+    # ctx is normally None in CI -- which used to leave strike/premium NULL and
+    # made every signal read as a vague "NIFTY CE (ATM)" with no contract to
+    # actually buy. The strike grid is deterministic, so we can always name it.
+    strike = ctx.get("atm_strike") or strike_for_style(spot, side, "ATM")
+
+    # Premium only exists when the live chain resolved; it is a market price we
+    # cannot derive. Null premium means "look it up on your broker", not
+    # "unknown trade".
     premium = None
     if ctx:
         premium = ctx.get("atm_ce_ltp") if side == "CE" else ctx.get("atm_pe_ltp")
 
     now = datetime.now(IST)
+    expiry = next_weekly_expiry(now)
     return {
         "id": str(uuid.uuid4()),
         "side": side,
         "strike": strike,
         "strike_style": "ATM",
         "premium": premium,
+        "option_expiry": expiry.isoformat(),
+        # Exactly what to punch into the broker, e.g. "NIFTY 24400 CE 12 Aug".
+        "instrument": f"NIFTY {strike} {side} {expiry.strftime('%d %b')}",
         "lots": sig.get("lots", 1),
-        "spot": ctx.get("spot") or sig["index_entry"],
+        "spot": spot,
         "index_entry": sig["index_entry"],
         "index_stop": sig["index_stop"],
         "index_target": sig.get("index_target"),
