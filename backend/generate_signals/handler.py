@@ -167,10 +167,14 @@ def _retry(fn, retries: int = 3, backoff: float = 1.5, label: str = ""):
 # BNBUSDT, TRXUSDT, AVAXUSDT, LINKUSDT dropped: they were the consistently
 # weakest performers across both 9-month and 2-year backtests (~23-31% win
 # rate vs ~40-54% for the kept pairs). See test_scripts.
+# BTCUSDT dropped 2026-08-05: 12.5% win rate over 8 closed live trades, the
+# worst of any pair with a meaningful sample. Small n, so this is a judgement
+# call on live results rather than a statistically settled one — re-add if a
+# longer backtest disagrees.
 TOP_PAIRS = [
-    "BTCUSDT",  "ETHUSDT",  "SOLUSDT",  "XRPUSDT",  "ADAUSDT",   # 1–5
-    "DOGEUSDT", "TONUSDT",  "DOTUSDT",  "LTCUSDT",  "BCHUSDT",   # 6–10
-    "UNIUSDT",                                                    # 11
+    "ETHUSDT",  "SOLUSDT",  "XRPUSDT",  "ADAUSDT",               # 1–4
+    "DOGEUSDT", "TONUSDT",  "DOTUSDT",  "LTCUSDT",  "BCHUSDT",   # 5–9
+    "UNIUSDT",                                                    # 10
 ]
 
 MIN_BULL_SCORE        = 4    # net bullish votes required for LONG
