@@ -84,17 +84,25 @@ class StrategyParams:
     # so an overnight gap reads as an intrabar RSI cross. That artifact produced
     # 32% of all triggers (11 of 34) on 60d of real data.
     #
-    # DEFAULT OFF, and that is a deliberate, uncomfortable call: those gap
-    # triggers were PROFITABLE over this window. Enabling the guard raises win
-    # rate 50.0 -> 55.6% and PF 3.78 -> 4.37, but cuts total P&L from Rs.41,538
-    # to Rs.28,247 -- it removes the artifact and Rs.13.3k of profit with it.
+    # ON by default. A single-window backtest makes the artifact look
+    # profitable (+Rs.13.3k), but a 3-block walk-forward over the same 58
+    # sessions shows that is one block, not an edge:
     #
-    # Turning it on is defensible (the signal's stated logic is momentum, not
-    # gap-chasing, and 11 trades in one 60-day window is thin evidence for
-    # keeping a known artifact). Turning it off is what the measured P&L
-    # supports. Left off so live behaviour matches the numbers the strategy was
-    # validated on; flip to True to trade only clean intraday momentum.
-    require_same_session: bool = False
+    #   block               guard OFF    guard ON     diff
+    #   2026-05-14..06-10      10,622      11,872   -1,250   <- ON better
+    #   2026-06-11..07-08       6,908       7,784     -876   <- ON better
+    #   2026-07-09..08-05      15,173      -3,116  +18,289   <- one block
+    #
+    # OFF wins 1 of 3 blocks. Inside those 11 gap trades: 6 are losers, and a
+    # single 2026-08-03 trade (+Rs.8,404) is 60% of the whole "edge". Every
+    # winner exits EOD/SQUAREOFF -- they are overnight-drift trades that
+    # happened to run the right way, not the momentum setup this strategy
+    # claims to trade. Keeping them means holding a known data artifact and
+    # hoping the drift keeps favouring you.
+    #
+    # Set to False to trade the gap bar anyway (higher single-window P&L,
+    # concentrated in one trade, and it does not repeat across blocks).
+    require_same_session: bool = True
     # Option-sizing / risk. Stop is RUPEE-based (see backtest.simulate_trade);
     # sl_atr_mult is kept only for the index-level display on live signals.
     sl_atr_mult: float = 1.5
