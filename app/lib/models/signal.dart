@@ -64,6 +64,11 @@ class TradeSignal {
   /// a real word rather than a cryptic code.
   String get strategyLabel => isDonchian ? 'BREAK' : 'MOMENTUM';
 
+  /// Unambiguous name for the detail screen, where the question being
+  /// answered is literally "which algorithm produced this signal".
+  String get strategyFullName =>
+      isDonchian ? 'BREAKOUT (new)' : 'MOMENTUM (legacy)';
+
   /// One-line explanation of what the engine looks for.
   String get strategyNote => isDonchian
       ? '55-bar channel breakout on 4h bars, 3R target'

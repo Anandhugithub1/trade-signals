@@ -18,6 +18,7 @@ class SignalsScreen extends StatefulWidget {
 class _SignalsScreenState extends State<SignalsScreen> {
   String _dirFilter = 'All';
   String _resFilter = 'All';
+  String _engineFilter = 'All';   // All | Breakout (new) | Momentum (legacy)
   String _search = '';
   final _ctrl = TextEditingController();
   List<TradeSignal> _signals = [];
@@ -57,7 +58,11 @@ class _SignalsScreenState extends State<SignalsScreen> {
           (_resFilter == 'Active' && s.isPending) ||
           (_resFilter == 'Won' && s.isWin) ||
           (_resFilter == 'Lost' && s.isLoss);
-      return matchSearch && matchDir && matchRes;
+      // Two engines run side by side; this is how you compare them.
+      final matchEngine = _engineFilter == 'All' ||
+          (_engineFilter == 'Breakout' && s.isDonchian) ||
+          (_engineFilter == 'Momentum' && !s.isDonchian);
+      return matchSearch && matchDir && matchRes && matchEngine;
     }).toList();
   }
 
@@ -154,31 +159,59 @@ class _SignalsScreenState extends State<SignalsScreen> {
     );
   }
 
-  // Direction filter row
+  // Direction + engine filters. Horizontally scrollable: six pills do not
+  // fit on a 360dp phone, and a fixed Row would clip them the way the
+  // signal card header did.
   Widget _buildDirFilters(AppColors c) {
-    return Row(
-      children: [
-        _FilterPill(
-          label: 'All',
-          active: _dirFilter == 'All',
-          color: c.accent,
-          onTap: () => setState(() => _dirFilter = 'All'),
-        ),
-        const SizedBox(width: 7),
-        _FilterPill(
-          label: 'Long',
-          active: _dirFilter == 'Long',
-          color: c.long,
-          onTap: () => setState(() => _dirFilter = 'Long'),
-        ),
-        const SizedBox(width: 7),
-        _FilterPill(
-          label: 'Short',
-          active: _dirFilter == 'Short',
-          color: c.short,
-          onTap: () => setState(() => _dirFilter = 'Short'),
-        ),
-      ],
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _FilterPill(
+            label: 'All',
+            active: _dirFilter == 'All',
+            color: c.accent,
+            onTap: () => setState(() => _dirFilter = 'All'),
+          ),
+          const SizedBox(width: 7),
+          _FilterPill(
+            label: 'Long',
+            active: _dirFilter == 'Long',
+            color: c.long,
+            onTap: () => setState(() => _dirFilter = 'Long'),
+          ),
+          const SizedBox(width: 7),
+          _FilterPill(
+            label: 'Short',
+            active: _dirFilter == 'Short',
+            color: c.short,
+            onTap: () => setState(() => _dirFilter = 'Short'),
+          ),
+          // Divider between direction and engine filters — they are
+          // different axes and shouldn't read as one group.
+          Container(
+            width: 1,
+            height: 18,
+            margin: const EdgeInsets.symmetric(horizontal: 9),
+            color: c.border,
+          ),
+          _FilterPill(
+            label: 'Breakout',
+            active: _engineFilter == 'Breakout',
+            color: c.long,
+            onTap: () => setState(() => _engineFilter =
+                _engineFilter == 'Breakout' ? 'All' : 'Breakout'),
+          ),
+          const SizedBox(width: 7),
+          _FilterPill(
+            label: 'Momentum',
+            active: _engineFilter == 'Momentum',
+            color: c.t2,
+            onTap: () => setState(() => _engineFilter =
+                _engineFilter == 'Momentum' ? 'All' : 'Momentum'),
+          ),
+        ],
+      ),
     );
   }
 

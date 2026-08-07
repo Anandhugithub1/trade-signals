@@ -206,10 +206,56 @@ class _PriceLevelsCard extends StatelessWidget {
           ],
           _PriceRow(label: 'Posted', value: timeAgo(signal.timestamp), color: c.t2),
           Divider(height: 1, color: c.border),
-          // Which engine generated this, in plain words — the badge alone
-          // does not say what BREAKOUT vs MOMENTUM actually means.
-          _PriceRow(
-              label: 'Strategy', value: signal.strategyNote, color: c.t2),
+          // Which engine generated this. Given a full row rather than only a
+          // header chip: "which algorithm produced this signal" is a primary
+          // question while two engines run side by side, and a small badge
+          // is easy to miss.
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Algorithm',
+                    style: TextStyle(color: c.t2, fontSize: 14)),
+                const Spacer(),
+                Flexible(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: (signal.isDonchian ? c.long : c.t3)
+                              .withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                              color: (signal.isDonchian ? c.long : c.t3)
+                                  .withValues(alpha: 0.4)),
+                        ),
+                        child: Text(
+                          signal.strategyFullName,
+                          style: TextStyle(
+                            color: signal.isDonchian ? c.long : c.t2,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.3,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        signal.strategyNote,
+                        textAlign: TextAlign.right,
+                        style: TextStyle(color: c.t3, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
           if (signal.hasExpiry && signal.isPending) ...[
             Divider(height: 1, color: c.border),
             _PriceRow(
