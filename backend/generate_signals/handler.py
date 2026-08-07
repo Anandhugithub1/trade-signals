@@ -75,6 +75,8 @@ from supabase import create_client, Client
 from google.oauth2 import service_account
 import google.auth.transport.requests
 
+from donchian import analyze_donchian
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -176,6 +178,14 @@ TOP_PAIRS = [
     "DOGEUSDT", "TONUSDT",  "DOTUSDT",  "LTCUSDT",  "BCHUSDT",   # 5–9
     "UNIUSDT",                                                    # 10
 ]
+
+# ── Engine tags (written to the `strategy` column) ────────────────────────────
+# Two engines run side by side so live results can decide between them:
+#   legacy   — the original vote-based momentum model (1h bars)
+#   donchian — channel breakout (4h bars), measurably better in backtest
+# Donchian is prioritised for the daily slots; see Pass 2.
+LEGACY_TAG   = "legacy"
+DONCHIAN_TAG = "donchian"
 
 MIN_BULL_SCORE        = 4    # net bullish votes required for LONG
 MIN_BEAR_SCORE        = 4    # net bearish votes required for SHORT
@@ -436,7 +446,7 @@ def _okx_symbol(pair: str) -> str:
     return pair[:-4] + "-USDT"
 
 
-def fetch_candles(symbol: str) -> list:
+def fetch_candles(symbol: str, interval: str = "1h") -> list:
     """
     Fetch 4-hour OHLCV candles — three-provider fallback chain.
 
@@ -449,11 +459,23 @@ def fetch_candles(symbol: str) -> list:
       2. Bybit Futures    api.bybit.com     — blocked on Azure cloud IPs (403)
       3. OKX              www.okx.com       — US-accessible, no geo-block ✓
     """
+    # Each provider spells the same interval differently.
+    binance_iv, bybit_iv, okx_iv = {
+        "1h": ("1h", "60", "1H"),
+        "4h": ("4h", "240", "4H"),
+    }[interval]
+
+    # CANDLE_LIMIT (300) is sized for 1h bars. On 4h it would cover only ~50
+    # days, and the EMA200 regime filter alone consumes 200 of those bars —
+    # leaving too little history for the 55-bar channel to ever break out.
+    # Ask for the provider maximum instead so the 4h engine has real history.
+    limit = CANDLE_LIMIT if interval == "1h" else 1000
+
     # 1. Binance Futures
     try:
         r = requests.get(
             BINANCE_FUTURES,
-            params={"symbol": symbol, "interval": "1h", "limit": CANDLE_LIMIT},
+            params={"symbol": symbol, "interval": binance_iv, "limit": limit},
             headers=_HEADERS, timeout=10,
         )
         if r.status_code == 200:
@@ -467,7 +489,7 @@ def fetch_candles(symbol: str) -> list:
         r = requests.get(
             BYBIT_KLINES,
             params={"category": "linear", "symbol": symbol,
-                    "interval": "60", "limit": CANDLE_LIMIT},
+                    "interval": bybit_iv, "limit": limit},
             headers=_HEADERS, timeout=10,
         )
         if r.status_code == 200:
@@ -479,7 +501,7 @@ def fetch_candles(symbol: str) -> list:
     # 3. OKX (US-accessible, identical index format, no geo-block)
     r = requests.get(
         OKX_KLINES,
-        params={"instId": _okx_symbol(symbol), "bar": "1H", "limit": CANDLE_LIMIT},
+        params={"instId": _okx_symbol(symbol), "bar": okx_iv, "limit": limit},
         headers=_HEADERS, timeout=10,
     )
     r.raise_for_status()
@@ -1222,6 +1244,7 @@ def handler(event=None, context=None):
     # ── Pass 1: analyse all pairs, collect valid candidates ───────────────────
     candidates   = []   # analyses that passed score + confidence thresholds
     all_analyses = []   # every analysis (for sentiment computation)
+    donchian_candidates = []   # breakout signals from the new engine
 
     for pair in TOP_PAIRS:
         try:
@@ -1239,6 +1262,20 @@ def handler(event=None, context=None):
                 continue
 
             candles = fetch_candles(pair)
+
+            # ── NEW engine: Donchian channel breakout on 4h bars ─────────
+            # Runs on its own candles and its own arithmetic. Evaluated
+            # first, but ranking (Pass 2) is what actually prioritises it.
+            try:
+                d4 = fetch_candles(pair, interval="4h")
+                dsig = analyze_donchian(pair, d4, get_live_price(pair))
+                if dsig:
+                    donchian_candidates.append(dsig)
+                    print(f"  [DONCHIAN] {pair:<12} {dsig['direction'].upper():<5} "
+                          f"entry={dsig['entry']:,.4f} "
+                          f"({dsig['_rank']:.2f} ATR beyond channel)")
+            except Exception as exc:
+                print(f"  [DONCHIAN ERR] {pair}: {exc}")
 
             # Per-pair derivatives data (OKX free, no key)
             fr_score, fr_reason = get_funding_rate(pair)
@@ -1279,10 +1316,29 @@ def handler(event=None, context=None):
             print(f"\n  [ERR] {msg}")
             stats["errors"].append(msg)
 
-    # ── Pass 2: rank by signal strength desc, keep only up to slots_left ─────
+    # ── Pass 2: rank, with the NEW engine taking priority ────────────────────
+    # Donchian is measurably the better strategy (PF 1.27 vs 1.09 over 20
+    # months of 4h bars, after fees — see donchian.py), so it fills the daily
+    # slots FIRST. The old vote engine only gets whatever capacity is left.
+    # Both are tagged in the `strategy` column so live results can settle
+    # which one actually earns its place.
+    donchian_candidates.sort(key=lambda s: -s["_rank"])
     candidates.sort(key=lambda a: a["signal"]["confidence"], reverse=True)
-    to_insert = candidates[:slots_left]
-    overflow  = candidates[slots_left:]
+
+    # Never open two positions on the same pair from different engines.
+    donchian_pairs = {s["pair"] for s in donchian_candidates[:slots_left]}
+    legacy = [a for a in candidates
+              if a["signal"]["pair"] not in donchian_pairs]
+
+    new_take = donchian_candidates[:slots_left]
+    room_left = max(0, slots_left - len(new_take))
+    to_insert = [{"signal": s, "engine": DONCHIAN_TAG} for s in new_take] \
+        + [{**a, "engine": LEGACY_TAG} for a in legacy[:room_left]]
+    overflow = legacy[room_left:]
+
+    print(f"\n  Engine mix: {len(new_take)} donchian (priority) + "
+          f"{min(room_left, len(legacy))} legacy  "
+          f"[{len(donchian_candidates)} / {len(candidates)} qualified]")
 
     if overflow:
         print(f"\n{SEP}")
@@ -1297,14 +1353,18 @@ def handler(event=None, context=None):
         print(f"  Inserting top {len(to_insert)} signal(s)  (max={MAX_SIGNALS}):\n")
 
     for analysis in to_insert:
-        sig = analysis["signal"]
+        sig = dict(analysis["signal"])          # copy: we mutate before insert
+        engine = analysis.get("engine", LEGACY_TAG)
+        sig["strategy"] = engine
+        sig.pop("_rank", None)                  # ranking helper, not a column
         try:
             supabase.table("trade_signals").insert(sig).execute()
             print(f"  [DB OK]  {sig['pair']:<12}  {sig['direction'].upper():<5}  "
-                  f"strength={sig['confidence']}%  "
+                  f"[{engine}]  "
                   f"RR=1:{sig['rr_ratio']:.2f}  "
                   f"entry=${sig['entry']:,.4f}  id={sig['id'][:8]}...")
             stats["inserted"] += 1
+            stats[f"inserted_{engine}"] = stats.get(f"inserted_{engine}", 0) + 1
         except Exception as exc:
             msg = f"{sig['pair']} insert failed: {exc}"
             print(f"  [DB ERR] {msg}")
