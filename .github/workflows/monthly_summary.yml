@@ -1,0 +1,41 @@
+name: Monthly Summary
+
+# Rolls closed trades into one small row per month/market so the long-run
+# record survives the 90-day TTL on the signals tables.
+#
+# Runs DAILY (not monthly) on purpose:
+#   - the current month keeps refreshing as trades close, so the dashboard
+#     is never stale;
+#   - a single missed monthly run can never lose a month permanently;
+#   - it recomputes the last few months each time, so late closes land in
+#     the right bucket.
+# 23:00 UTC is after both the US close and the Indian session.
+on:
+  schedule:
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+
+jobs:
+  summarise:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/monthly_summary/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/monthly_summary/requirements.txt
+
+      - name: Build monthly summary
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python backend/monthly_summary/handler.py
