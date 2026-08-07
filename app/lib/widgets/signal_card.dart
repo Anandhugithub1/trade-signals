@@ -146,6 +146,8 @@ class _FullBody extends StatelessWidget {
                             style: TextStyle(color: c.t1, fontSize: 15, fontWeight: FontWeight.w700)),
                         const SizedBox(width: 5),
                         _PerpChip(),
+                        const SizedBox(width: 4),
+                        _EngineChip(signal: signal),
                       ],
                     ),
                     const SizedBox(height: 1),
@@ -246,6 +248,41 @@ class _ResultBadge extends StatelessWidget {
           Text(label,
               style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
         ],
+      ),
+    );
+  }
+}
+
+/// Which engine produced the signal. Two crypto strategies run side by side
+/// (see backend/generate_signals/donchian.py), so the badge makes it obvious
+/// which one a given trade came from — otherwise they are indistinguishable
+/// in the feed and there is no way to judge them against each other.
+class _EngineChip extends StatelessWidget {
+  final TradeSignal signal;
+
+  const _EngineChip({required this.signal});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    // Breakout is the newer, better-performing engine — give it the accent
+    // colour; legacy stays muted so the feed reads at a glance.
+    final color = signal.isDonchian ? c.long : c.t3;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Text(
+        signal.strategyLabel,
+        style: TextStyle(
+          color: color,
+          fontSize: 8,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.8,
+        ),
       ),
     );
   }

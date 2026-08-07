@@ -32,6 +32,10 @@ class SignalDetailScreen extends StatelessWidget {
             const SizedBox(width: 6),
             _Badge(label: 'PERP', color: c.accent),
             const SizedBox(width: 6),
+            _Badge(
+                label: signal.strategyLabel,
+                color: signal.isDonchian ? c.long : c.t3),
+            const SizedBox(width: 6),
             _Badge(label: dirLabel, color: dirColor),
             if (!signal.isPending) ...[
               const SizedBox(width: 6),
@@ -201,6 +205,11 @@ class _PriceLevelsCard extends StatelessWidget {
             Divider(height: 1, color: c.border),
           ],
           _PriceRow(label: 'Posted', value: timeAgo(signal.timestamp), color: c.t2),
+          Divider(height: 1, color: c.border),
+          // Which engine generated this, in plain words — the badge alone
+          // does not say what BREAKOUT vs MOMENTUM actually means.
+          _PriceRow(
+              label: 'Strategy', value: signal.strategyNote, color: c.t2),
           if (signal.hasExpiry && signal.isPending) ...[
             Divider(height: 1, color: c.border),
             _PriceRow(
@@ -231,8 +240,17 @@ class _PriceRow extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: TextStyle(color: c.t2, fontSize: 14)),
-          Text(value,
-              style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.w700)),
+          // Flexible + right-align: most values are short prices, but the
+          // Strategy row carries a full sentence that would otherwise
+          // overflow the row on narrow screens.
+          Flexible(
+            child: Text(
+              value,
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                  color: color, fontSize: 14, fontWeight: FontWeight.w700),
+            ),
+          ),
         ],
       ),
     );

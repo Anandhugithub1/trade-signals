@@ -13,6 +13,11 @@ class TradeSignal {
   final double? latestPrice;  // updated every hour by check_signals
   final bool entryConfirmed;  // true once price has touched the limit entry
 
+  /// Which engine produced this signal: 'donchian' (4h channel breakout) or
+  /// 'legacy' (the original 1h vote model). Both run side by side so live
+  /// results can settle which one is actually better.
+  final String strategy;
+
   const TradeSignal({
     required this.id,
     required this.pair,
@@ -27,6 +32,7 @@ class TradeSignal {
     this.closePrice,
     this.latestPrice,
     this.entryConfirmed = false,
+    this.strategy = 'legacy',
   });
 
   factory TradeSignal.fromJson(Map<String, dynamic> j) {
@@ -44,8 +50,22 @@ class TradeSignal {
       closePrice: j['close_price'] != null ? (j['close_price'] as num).toDouble() : null,
       latestPrice: j['latest_price'] != null ? (j['latest_price'] as num).toDouble() : null,
       entryConfirmed: j['entry_confirmed'] as bool? ?? false,
+      // Defaults to 'legacy' so rows written before the engine split (and
+      // any app build older than the migration) still render.
+      strategy: (j['strategy'] as String?) ?? 'legacy',
     );
   }
+
+  // ---- Engine helpers ----
+  bool get isDonchian => strategy == 'donchian';
+
+  /// Short label for the card badge.
+  String get strategyLabel => isDonchian ? 'BREAKOUT' : 'MOMENTUM';
+
+  /// One-line explanation of what the engine looks for.
+  String get strategyNote => isDonchian
+      ? '55-bar channel breakout on 4h bars, 3R target'
+      : 'Multi-indicator momentum vote on 1h bars, 2R target';
 
   static SignalResult _resultFromString(String r) {
     switch (r) {
