@@ -35,6 +35,18 @@ SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 SEP = "-" * 60
 TTL_DAYS = 90
 
+# Metals are stored under their market symbol but quoted by yfinance under
+# the COMEX front-month future. Reverse of generate_stock_signals.METALS.
+FEED_SYMBOL = {
+    "XAUUSD": "GC=F",   # gold
+    "XAGUSD": "SI=F",   # silver
+}
+
+
+def feed_symbol(ticker: str) -> str:
+    """Stored ticker -> the symbol yfinance quotes it under."""
+    return FEED_SYMBOL.get(ticker, ticker)
+
 
 def _parse(ts) -> datetime | None:
     if not ts:
@@ -119,20 +131,27 @@ def handler(event=None, context=None):
         return {"statusCode": 200, "body": json.dumps({"open": 0})}
 
     import yfinance as yf
-    tickers = sorted({r["ticker"] for r in rows})
-    raw = yf.download(tickers, period="6mo", interval="1d", progress=False,
+    # Fetch under FEED symbols (metals quote as GC=F / SI=F, not XAUUSD).
+    feeds = sorted({feed_symbol(r["ticker"]) for r in rows})
+    raw = yf.download(feeds, period="6mo", interval="1d", progress=False,
                       auto_adjust=True, group_by="ticker", threads=True)
 
-    def frame(t):
+    def frame(ticker: str) -> pd.DataFrame:
+        f = feed_symbol(ticker)
+        cols = ["Open", "High", "Low", "Close"]
         try:
-            sub = raw[t][["Open", "High", "Low", "Close"]].dropna() \
-                if len(tickers) > 1 else raw[["Open", "High", "Low", "Close"]].dropna()
+            # With one symbol yfinance returns flat columns; with several it
+            # returns a per-ticker MultiIndex. Key off the actual shape rather
+            # than the request size, so a partial failure can't misalign us.
+            sub = (raw[f][cols] if isinstance(raw.columns, pd.MultiIndex)
+                   else raw[cols]).dropna()
         except Exception:
             return pd.DataFrame()
-        if sub.index.tz is None:
-            sub.index = sub.index.tz_localize(timezone.utc)
-        else:
-            sub.index = sub.index.tz_convert(timezone.utc)
+        if sub.empty:
+            return sub
+        sub.index = (sub.index.tz_localize(timezone.utc)
+                     if sub.index.tz is None
+                     else sub.index.tz_convert(timezone.utc))
         return sub
 
     closed = still_open = errors = 0

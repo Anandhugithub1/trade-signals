@@ -35,8 +35,8 @@ os.environ.setdefault("SUPABASE_URL", "http://localhost")
 os.environ.setdefault("SUPABASE_SERVICE_ROLE_KEY", "backtest")
 
 from handler import (  # noqa: E402
-    TOP_STOCKS, BENCHMARK, MIN_SCORE, ADX_TREND_MIN,
-    ATR_SL_MULT, TP_R_MULT, MAX_HOLD_DAYS, MAX_SIGNALS,
+    UNIVERSE, METALS, BENCHMARK, MIN_SCORE, ADX_TREND_MIN,
+    ATR_SL_MULT, TP_R_MULT, MAX_HOLD_DAYS, MAX_SIGNALS, MAX_METAL_SIGNALS,
     add_indicators,
 )
 
@@ -45,11 +45,11 @@ SLIPPAGE_BPS = 5 / 10_000     # 5 basis points per side
 
 def load(period: str = "3y") -> dict[str, pd.DataFrame]:
     import yfinance as yf
-    raw = yf.download(TOP_STOCKS + [BENCHMARK], period=period, interval="1d",
+    raw = yf.download(UNIVERSE + [BENCHMARK], period=period, interval="1d",
                       progress=False, auto_adjust=True, group_by="ticker",
                       threads=True)
     out = {}
-    for t in TOP_STOCKS + [BENCHMARK]:
+    for t in UNIVERSE + [BENCHMARK]:
         try:
             sub = raw[t][["Open", "High", "Low", "Close", "Volume"]].dropna()
             if len(sub) > 250:
@@ -119,20 +119,26 @@ def simulate(ind: dict, days: list, use_regime: bool = True) -> list[dict]:
             if pd.isna(sr["ema200"]) or sr["Close"] <= sr["ema200"]:
                 continue
 
-        # 3) new entries, best score first, respecting the concurrent cap
-        room = MAX_SIGNALS - len(open_pos)
-        if room <= 0:
+        # 3) new entries — equities and metals fill SEPARATE slots, mirroring
+        #    handler.py. A shared pool never trades metals (50 equities crowd
+        #    them out), so modelling one pool would overstate diversification.
+        eq_open = len([t for t in open_pos if t not in METALS])
+        mt_open = len([t for t in open_pos if t in METALS])
+        eq_room = MAX_SIGNALS - eq_open
+        mt_room = MAX_METAL_SIGNALS - mt_open
+        if eq_room <= 0 and mt_room <= 0:
             continue
-        cands = []
+        eq_c, mt_c = [], []
         for t in tickers:
             if t in open_pos or d not in ind[t].index:
                 continue
             r = ind[t].loc[d]
             sc = score_row(r)
             if sc >= MIN_SCORE:
-                cands.append((sc, t, r))
-        cands.sort(key=lambda z: -z[0])
-        for sc, t, r in cands[:room]:
+                (mt_c if t in METALS else eq_c).append((sc, t, r))
+        eq_c.sort(key=lambda z: -z[0])
+        mt_c.sort(key=lambda z: -z[0])
+        for sc, t, r in eq_c[:max(0, eq_room)] + mt_c[:max(0, mt_room)]:
             if pd.isna(r["atr"]) or r["atr"] <= 0:
                 continue
             entry = r["Close"] * (1 + SLIPPAGE_BPS)
@@ -170,7 +176,7 @@ def main() -> None:
     args = ap.parse_args()
 
     print(f"Loading {args.period} of daily bars for "
-          f"{len(TOP_STOCKS)} stocks + {BENCHMARK} ...")
+          f"{len(UNIVERSE)} instruments + {BENCHMARK} ...")
     ind = load(args.period)
     print(f"  usable: {len(ind)}")
 

@@ -106,7 +106,7 @@ class _StocksScreenState extends State<StocksScreen> {
                       fontSize: 26,
                       fontWeight: FontWeight.w800,
                       letterSpacing: -0.5)),
-              Text('Swing signals · top 50 large-caps',
+              Text('Swing signals · top 50 stocks + gold/silver',
                   style: TextStyle(color: c.t2, fontSize: 12)),
             ],
           ),
