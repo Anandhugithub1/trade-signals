@@ -9,6 +9,7 @@ import { supabase, isConfigured } from '@/lib/supabase'
 import { isAdmin } from '@/lib/admin'
 import { createClient } from '@/lib/supabase'
 import type { TradeSignal } from '@/types/signal'
+import MonthlyTrackRecord from '@/components/MonthlyTrackRecord'
 
 interface Sentiment {
   id: string; date: string
@@ -256,6 +257,16 @@ export default function Analytics() {
             ))}
           </div>
         </div>
+
+        {/* ── Monthly track record ── */}
+        {/* Sits above the charts because it is the only view that survives
+            the 90-day TTL — everything below is limited to that window. */}
+        <Section
+          title="Monthly Track Record"
+          sub="Permanent month-by-month record across all three markets. Raw signals are deleted after 90 days; these rollups are kept forever."
+        >
+          <MonthlyTrackRecord />
+        </Section>
 
         {/* ── Equity curve ── */}
         <Section
