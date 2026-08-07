@@ -86,13 +86,24 @@ class _CompactBody extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Row(
+              // Wrap rather than Row: four chips plus the pair name do not
+              // fit on one line at 320-360dp, and a plain Row overflows
+              // instead of reflowing.
+              Wrap(
+                spacing: 5,
+                runSpacing: 3,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  Text(signal.pair,
-                      style: TextStyle(color: c.t1, fontSize: 14, fontWeight: FontWeight.w700)),
-                  const SizedBox(width: 5),
+                  Text(
+                    signal.pair,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        color: c.t1,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700),
+                  ),
                   _PerpChip(),
-                  const SizedBox(width: 5),
+                  _EngineChip(signal: signal),
                   _DirectionBadge(signal: signal, color: dirColor),
                 ],
               ),
@@ -129,35 +140,58 @@ class _FullBody extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // The left block must be Flexible: with the engine chip added, its
+        // natural width exceeded the card on narrow phones and pushed the
+        // direction/result badges off the right edge. spaceBetween cannot
+        // recover once children overflow, so the left side has to be the
+        // one that yields.
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Row(
-              children: [
-                _CoinIcon(pair: signal.pair, color: dirColor),
-                const SizedBox(width: 10),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
+            Flexible(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _CoinIcon(pair: signal.pair, color: dirColor),
+                  const SizedBox(width: 10),
+                  Flexible(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(signal.pair,
-                            style: TextStyle(color: c.t1, fontSize: 15, fontWeight: FontWeight.w700)),
-                        const SizedBox(width: 5),
-                        _PerpChip(),
-                        const SizedBox(width: 4),
-                        _EngineChip(signal: signal),
+                        // Pair name on its own line so the chips below always
+                        // get their full width. Keeping all four on one row
+                        // squeezed the chip strip to ~49px and overflowed by
+                        // 89px at 360dp — the reported bug.
+                        Text(
+                          signal.pair,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: c.t1,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 3),
+                        Wrap(
+                          spacing: 4,
+                          runSpacing: 3,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            _PerpChip(),
+                            _EngineChip(signal: signal),
+                            Text(timeAgo(signal.timestamp),
+                                style: TextStyle(color: c.t3, fontSize: 11)),
+                          ],
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 1),
-                    Text(timeAgo(signal.timestamp),
-                        style: TextStyle(color: c.t3, fontSize: 11)),
-                  ],
-                ),
-              ],
+                  ),
+                ],
+              ),
             ),
+            const SizedBox(width: 8),
             Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 _DirectionBadge(signal: signal, color: dirColor),
                 const SizedBox(width: 8),
@@ -487,14 +521,26 @@ class _EntryWaitingBanner extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Row(
-            children: [
-              Icon(Icons.hourglass_empty_rounded, color: c.t2, size: 13),
-              const SizedBox(width: 6),
-              Text('Entry Initiated',
-                  style: TextStyle(color: c.t2, fontSize: 11, fontWeight: FontWeight.w600)),
-            ],
+          // Flexible + ellipsis: this row overflowed at 320-360dp even before
+          // the engine chip existed.
+          Flexible(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.hourglass_empty_rounded, color: c.t2, size: 13),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text('Entry Initiated',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          color: c.t2,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600)),
+                ),
+              ],
+            ),
           ),
+          const SizedBox(width: 6),
           Text('Waiting for fill',
               style: TextStyle(color: c.t2, fontSize: 11, fontWeight: FontWeight.w700)),
         ],

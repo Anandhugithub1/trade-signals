@@ -59,8 +59,10 @@ class TradeSignal {
   // ---- Engine helpers ----
   bool get isDonchian => strategy == 'donchian';
 
-  /// Short label for the card badge.
-  String get strategyLabel => isDonchian ? 'BREAKOUT' : 'MOMENTUM';
+  /// Badge text for the feed card. Short enough to survive a crowded header
+  /// row (pair + PERP chip + direction + result) on a narrow phone, but still
+  /// a real word rather than a cryptic code.
+  String get strategyLabel => isDonchian ? 'BREAK' : 'MOMENTUM';
 
   /// One-line explanation of what the engine looks for.
   String get strategyNote => isDonchian
