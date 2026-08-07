@@ -343,7 +343,8 @@ def handler(event=None, context=None):
     print(f"\n[generate_stock_signals] inserted {inserted}")
     return {"statusCode": 200,
             "body": json.dumps({"inserted": inserted,
-                                "qualified": len(candidates)})}
+                                "qualified_equity": len(equities),
+                                "qualified_metal": len(metals)})}
 
 
 def _notify(supabase, signals: list) -> None:
