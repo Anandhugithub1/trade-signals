@@ -13,6 +13,7 @@ import 'screens/disclaimer_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/signals_screen.dart';
 import 'screens/nifty_options_screen.dart';
+import 'screens/stocks_screen.dart';
 import 'screens/profile_screen.dart';
 
 void main() async {
@@ -73,6 +74,7 @@ class _MainShellState extends State<MainShell> {
     HomeScreen(),
     SignalsScreen(),
     NiftyOptionsScreen(),
+    StocksScreen(),
     ProfileScreen(),
   ];
 
@@ -116,6 +118,11 @@ class _MainShellState extends State<MainShell> {
               selectedIcon:
                   Icon(Icons.candlestick_chart_rounded, color: c.accent),
               label: 'Options',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.trending_up_outlined, color: c.t3),
+              selectedIcon: Icon(Icons.trending_up_rounded, color: c.accent),
+              label: 'Stocks',
             ),
             NavigationDestination(
               icon: Icon(Icons.person_outline_rounded, color: c.t3),

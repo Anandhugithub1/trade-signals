@@ -1,0 +1,55 @@
+name: US Stock Signals
+
+# US market hours are 09:30-16:00 ET. We run ONCE per weekday after the
+# close, on completed daily bars — the strategy is a daily-bar swing system,
+# so there is nothing to gain from intraday runs.
+#
+# 21:30 UTC = 16:30 ET (EST, winter) / 17:30 EDT (summer). GitHub cron has no
+# timezone support, so this is always >=30 min after the 16:00 ET close in
+# either DST regime. Mon-Fri only.
+#
+# NOTE: yfinance can lag the close by a few minutes; the 30-min buffer covers
+# it. Scheduled runs can also be delayed under load — harmless here, since a
+# daily bar does not change once the session has ended.
+on:
+  schedule:
+    - cron: '30 21 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  signals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/generate_stock_signals/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/generate_stock_signals/requirements.txt
+
+      - name: Write Firebase service account
+        run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}' > /tmp/firebase-sa.json
+
+      - name: Generate stock signals
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FIREBASE_SERVICE_ACCOUNT_PATH: /tmp/firebase-sa.json
+        run: python backend/generate_stock_signals/handler.py
+
+      # Close out open positions. Runs even if generation failed, since open
+      # trades still need their stops and targets checked.
+      - name: Check open stock signals
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python backend/check_stock_signals/handler.py

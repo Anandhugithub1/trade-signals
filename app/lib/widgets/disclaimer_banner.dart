@@ -13,6 +13,11 @@ class DisclaimerBanner extends StatelessWidget {
       'Crypto is highly volatile. Never risk more than 2–3% of capital '
       'per trade. Signals are not financial advice.';
 
+  static const stocksMessage =
+      'Swing trades held days to weeks — overnight and earnings gaps can '
+      'skip your stop. Never risk more than 2–3% of capital per trade. '
+      'Signals are not financial advice.';
+
   static const optionsMessage =
       'Options can expire worthless — you can lose the entire premium. '
       'Never risk more than 2–3% of capital per trade. Signals are not '
