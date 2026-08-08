@@ -1248,34 +1248,44 @@ def handler(event=None, context=None):
 
     for pair in TOP_PAIRS:
         try:
+            # A pending position blocks only the ENGINE that opened it, not
+            # the pair. Skipping the whole pair meant a legacy position made
+            # Donchian blind to that symbol entirely — with 4 of 10 pairs
+            # typically held, the new engine could never be evaluated on them
+            # and the two could not be compared fairly.
             existing = (
                 supabase.table("trade_signals")
-                .select("id, timestamp")
+                .select("id, timestamp, strategy")
                 .eq("pair", pair)
                 .eq("result", "pending")
                 .execute()
-            )
-            if existing.data:
-                ts = existing.data[0].get("timestamp", "")[:10]
-                print(f"  [SKIP] {pair:<12} — pending signal already exists ({ts})")
-                stats["skipped_existing"] += 1
-                continue
-
-            candles = fetch_candles(pair)
+            ).data or []
+            held_by = {r.get("strategy") or LEGACY_TAG for r in existing}
 
             # ── NEW engine: Donchian channel breakout on 4h bars ─────────
             # Runs on its own candles and its own arithmetic. Evaluated
             # first, but ranking (Pass 2) is what actually prioritises it.
-            try:
-                d4 = fetch_candles(pair, interval="4h")
-                dsig = analyze_donchian(pair, d4, get_live_price(pair))
-                if dsig:
-                    donchian_candidates.append(dsig)
-                    print(f"  [DONCHIAN] {pair:<12} {dsig['direction'].upper():<5} "
-                          f"entry={dsig['entry']:,.4f} "
-                          f"({dsig['_rank']:.2f} ATR beyond channel)")
-            except Exception as exc:
-                print(f"  [DONCHIAN ERR] {pair}: {exc}")
+            if DONCHIAN_TAG in held_by:
+                print(f"  [SKIP] {pair:<12} — donchian position already open")
+            else:
+                try:
+                    d4 = fetch_candles(pair, interval="4h")
+                    dsig = analyze_donchian(pair, d4, get_live_price(pair))
+                    if dsig:
+                        donchian_candidates.append(dsig)
+                        print(f"  [DONCHIAN] {pair:<12} {dsig['direction'].upper():<5} "
+                              f"entry={dsig['entry']:,.4f} "
+                              f"({dsig['_rank']:.2f} ATR beyond channel)")
+                except Exception as exc:
+                    print(f"  [DONCHIAN ERR] {pair}: {exc}")
+
+            if LEGACY_TAG in held_by:
+                ts = existing[0].get("timestamp", "")[:10]
+                print(f"  [SKIP] {pair:<12} — legacy signal already exists ({ts})")
+                stats["skipped_existing"] += 1
+                continue
+
+            candles = fetch_candles(pair)
 
             # Per-pair derivatives data (OKX free, no key)
             fr_score, fr_reason = get_funding_rate(pair)
