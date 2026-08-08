@@ -515,6 +515,22 @@ def fetch_candles(symbol: str, interval: str = "1h") -> list:
     return list(reversed(r.json()["data"]))   # OKX newest-first → reverse
 
 
+def is_stale_feed(candles: list, lookback: int = 30) -> bool:
+    """
+    True when a feed has flatlined — the same close for `lookback` bars.
+
+    A delisted or halted pair keeps returning candles, but with a frozen
+    price. Every indicator then degenerates: ATR is 0, the Donchian channel
+    has zero width, and EMAs converge on the constant. TONUSDT is currently
+    in this state (identical close for 60+ bars on both 1h and 4h), which
+    would silently feed garbage into both engines rather than erroring.
+    """
+    if len(candles) < lookback:
+        return False
+    closes = {float(c[4]) for c in candles[-lookback:]}
+    return len(closes) <= 1
+
+
 def get_live_price(symbol: str) -> float | None:
     """
     Fetch the real-time last-traded price from ticker APIs.
@@ -1290,6 +1306,11 @@ def handler(event=None, context=None):
             else:
                 try:
                     d4 = fetch_candles(pair, interval="4h")
+                    if is_stale_feed(d4):
+                        print(f"  [STALE] {pair:<12} — price frozen, feed likely "
+                              f"delisted/halted; skipping both engines")
+                        stats["stale_feed"] = stats.get("stale_feed", 0) + 1
+                        continue
                     dsig = analyze_donchian(pair, d4, get_live_price(pair))
                     if dsig:
                         donchian_candidates.append(dsig)
