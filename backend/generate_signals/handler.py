@@ -190,7 +190,14 @@ DONCHIAN_TAG = "donchian"
 MIN_BULL_SCORE        = 4    # net bullish votes required for LONG
 MIN_BEAR_SCORE        = 4    # net bearish votes required for SHORT
 MIN_SIGNAL_STRENGTH   = 72   # signals below this strength % are discarded
-MAX_SIGNALS           = 3    # insert at most this many signals per day
+
+# Per-ENGINE daily cap, not a shared pool: 3 donchian + 3 legacy = 6/day max.
+# A shared cap meant the prioritised engine took every slot it qualified for
+# and the other got only leftovers, so each engine's sample size depended on
+# how busy the other happened to be. Separate caps let both accumulate trades
+# on their own merit, which is the whole point of running them side by side.
+MAX_SIGNALS_PER_ENGINE = 3
+MAX_SIGNALS            = MAX_SIGNALS_PER_ENGINE * 2   # 6 — used for logging
 
 # ── Regime filter (momentum needs a trend) ────────────────────────────────────
 ADX_TREND_MIN = 20   # ADX below this = ranging/choppy → skip (no momentum edge)
@@ -1206,21 +1213,34 @@ def handler(event=None, context=None):
     today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     today_rows  = (
         supabase.table("trade_signals")
-        .select("id")
+        .select("id, strategy")
         .gte("timestamp", today_start)
         .execute()
-    )
-    today_count   = len(today_rows.data)
-    slots_left    = max(0, MAX_SIGNALS - today_count)
+    ).data or []
+
+    # Each engine has its own budget, so count them separately.
+    today_by_engine = {
+        DONCHIAN_TAG: sum(1 for r in today_rows
+                          if (r.get("strategy") or LEGACY_TAG) == DONCHIAN_TAG),
+        LEGACY_TAG:   sum(1 for r in today_rows
+                          if (r.get("strategy") or LEGACY_TAG) == LEGACY_TAG),
+    }
+    donchian_slots = max(0, MAX_SIGNALS_PER_ENGINE - today_by_engine[DONCHIAN_TAG])
+    legacy_slots   = max(0, MAX_SIGNALS_PER_ENGINE - today_by_engine[LEGACY_TAG])
+    today_count    = len(today_rows)
+    slots_left     = donchian_slots + legacy_slots
 
     print(f"[generate_signals] Signals today: {today_count} / {MAX_SIGNALS}  "
-          f"(slots remaining: {slots_left})")
+          f"(donchian {today_by_engine[DONCHIAN_TAG]}/{MAX_SIGNALS_PER_ENGINE}, "
+          f"legacy {today_by_engine[LEGACY_TAG]}/{MAX_SIGNALS_PER_ENGINE})")
 
     if slots_left == 0:
-        print(f"[generate_signals] Daily cap of {MAX_SIGNALS} already reached — skipping run.\n")
+        print(f"[generate_signals] Both engines at their daily cap of "
+              f"{MAX_SIGNALS_PER_ENGINE} — skipping run.\n")
         return {"statusCode": 200, "body": json.dumps({"skipped": True, "today_count": today_count})}
 
-    print(f"[generate_signals] Will create up to {slots_left} more signal(s) this run.\n")
+    print(f"[generate_signals] Room for {donchian_slots} donchian + "
+          f"{legacy_slots} legacy signal(s) this run.\n")
 
     # ── Global indicators (fetched once, applied to all pairs) ───────────────
     fg_score, fg_raw, fg_reason = get_fear_greed()
@@ -1326,33 +1346,37 @@ def handler(event=None, context=None):
             print(f"\n  [ERR] {msg}")
             stats["errors"].append(msg)
 
-    # ── Pass 2: rank, with the NEW engine taking priority ────────────────────
-    # Donchian is measurably the better strategy (PF 1.27 vs 1.09 over 20
-    # months of 4h bars, after fees — see donchian.py), so it fills the daily
-    # slots FIRST. The old vote engine only gets whatever capacity is left.
-    # Both are tagged in the `strategy` column so live results can settle
-    # which one actually earns its place.
+    # ── Pass 2: rank within each engine's own budget ─────────────────────────
+    # The engines no longer compete for slots — each has MAX_SIGNALS_PER_ENGINE
+    # of its own, so neither engine's sample size depends on how active the
+    # other happens to be. Both are tagged in the `strategy` column so live
+    # results can settle which one actually earns its place.
     donchian_candidates.sort(key=lambda s: -s["_rank"])
     candidates.sort(key=lambda a: a["signal"]["confidence"], reverse=True)
 
-    # Never open two positions on the same pair from different engines.
-    donchian_pairs = {s["pair"] for s in donchian_candidates[:slots_left]}
+    new_take = donchian_candidates[:donchian_slots]
+
+    # Never open two positions on the same pair from different engines: if
+    # Donchian is taking a pair this run, legacy stands down on it. Donchian
+    # wins the tie because it is the measurably better strategy (PF 1.27 vs
+    # 1.09 over 20 months of 4h bars, after fees — see donchian.py).
+    donchian_pairs = {s["pair"] for s in new_take}
     legacy = [a for a in candidates
               if a["signal"]["pair"] not in donchian_pairs]
 
-    new_take = donchian_candidates[:slots_left]
-    room_left = max(0, slots_left - len(new_take))
+    legacy_take = legacy[:legacy_slots]
     to_insert = [{"signal": s, "engine": DONCHIAN_TAG} for s in new_take] \
-        + [{**a, "engine": LEGACY_TAG} for a in legacy[:room_left]]
-    overflow = legacy[room_left:]
+        + [{**a, "engine": LEGACY_TAG} for a in legacy_take]
+    overflow = legacy[legacy_slots:]
 
-    print(f"\n  Engine mix: {len(new_take)} donchian (priority) + "
-          f"{min(room_left, len(legacy))} legacy  "
+    print(f"\n  Engine mix: {len(new_take)}/{donchian_slots} donchian + "
+          f"{len(legacy_take)}/{legacy_slots} legacy  "
           f"[{len(donchian_candidates)} / {len(candidates)} qualified]")
 
     if overflow:
         print(f"\n{SEP}")
-        print(f"  Dropped (exceed daily cap of {MAX_SIGNALS} — {today_count} already today):")
+        print(f"  Dropped (legacy engine at its cap of {MAX_SIGNALS_PER_ENGINE}/day "
+              f"— {today_by_engine[LEGACY_TAG]} already today):")
         for a in overflow:
             s = a["signal"]
             print(f"    {s['pair']:<12}  {s['direction'].upper():<5}  strength={s['confidence']}%  — not inserted")
@@ -1393,7 +1417,11 @@ def handler(event=None, context=None):
 
     print(f"\n{SEP}")
     print(f"[generate_signals] Done")
-    print(f"  Inserted         : {stats['inserted']}  (daily cap={MAX_SIGNALS}, today total={today_count + stats['inserted']})")
+    print(f"  Inserted         : {stats['inserted']}  "
+          f"(donchian {stats.get('inserted_' + DONCHIAN_TAG, 0)}, "
+          f"legacy {stats.get('inserted_' + LEGACY_TAG, 0)}; "
+          f"cap {MAX_SIGNALS_PER_ENGINE}/engine, today total="
+          f"{today_count + stats['inserted']})")
     print(f"  Low strength     : {stats['low_confidence']}  (below {MIN_SIGNAL_STRENGTH}%)")
     print(f"  No signal        : {stats['no_signal']}")
     print(f"  Already pending  : {stats['skipped_existing']}")
