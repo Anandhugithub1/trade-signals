@@ -4,6 +4,7 @@ import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
   BarChart, Bar, XAxis, YAxis,
   AreaChart, Area, ReferenceLine,
+  LineChart, Line, Legend,
 } from 'recharts'
 import { supabase, isConfigured } from '@/lib/supabase'
 import { isAdmin } from '@/lib/admin'
@@ -33,6 +34,8 @@ const Tip = memo(({ active, payload, label }: any) => {
           <span className="ml-auto font-bold text-white pl-4">
             {p.name === 'P&L'
               ? `${p.value >= 0 ? '+' : '−'}$${Math.abs(p.value)}`
+              : p.name === 'donchian' || p.name === 'mean_reversion'
+              ? `${p.value >= 0 ? '+' : ''}${p.value}R`
               : `${p.value}${['Win Rate','Precision','Bullish','Neutral','Bearish'].includes(p.name) ? '%' : ''}`}
           </span>
         </div>
@@ -207,6 +210,71 @@ export default function Analytics() {
   const finalPnl = equity.length ? equity[equity.length - 1]['P&L'] : 0
   const eqColor  = finalPnl >= 0 ? '#22c55e' : '#ef4444'
 
+  // ── Engine comparison ──────────────────────────────────────────────────────
+  // Realized R-multiple per trade, computed from actual entry/stop/target —
+  // NOT the equity curve's fixed $35/-$20 (that assumes one flat TP/SL % for
+  // every trade, which donchian's 3R target and mean_reversion's ~1:1 target
+  // both violate). risk = |entry - stop_loss|; a win realizes the full
+  // planned reward (take_profit distance), a loss realizes -1R by
+  // definition of the stop.
+  const realizedR = (x: TradeSignal): number | null => {
+    const risk = Math.abs(x.entry - x.stop_loss)
+    if (!risk) return null
+    if (x.result === 'win')  return Math.abs(x.take_profit - x.entry) / risk
+    if (x.result === 'loss') return -1
+    return null
+  }
+
+  const ENGINES = [
+    { key: 'donchian',       label: 'Donchian',       color: '#22c55e' },
+    { key: 'mean_reversion', label: 'Mean Reversion', color: '#6366f1' },
+  ] as const
+
+  const engineStats = useMemo(() => ENGINES.map(eng => {
+    const rows   = signals.filter(x => x.strategy === eng.key)
+    const closed = rows.filter(x => x.result === 'win' || x.result === 'loss')
+    const wins   = closed.filter(x => x.result === 'win').length
+    const losses = closed.length - wins
+    const rs      = closed.map(realizedR).filter((r): r is number => r !== null)
+    const totalR   = rs.reduce((a, r) => a + r, 0)
+    const grossWin  = rs.filter(r => r > 0).reduce((a, r) => a + r, 0)
+    const grossLoss = Math.abs(rs.filter(r => r < 0).reduce((a, r) => a + r, 0))
+    const pf = grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? Infinity : 0)
+    return {
+      ...eng, rows: rows.length, closed: closed.length, wins, losses,
+      winRate: wr(wins, closed.length), totalR, pf,
+      pending: rows.filter(x => x.result === 'pending').length,
+    }
+  }), [signals])
+
+  // Per-engine cumulative R curve, merged onto a shared trade index so both
+  // lines render on one chart even though the engines fire at different
+  // times/frequencies (mean_reversion fires far less often than donchian).
+  const engineEquity = useMemo(() => {
+    const series = ENGINES.map(eng => {
+      const closed = signals
+        .filter(x => x.strategy === eng.key && (x.result === 'win' || x.result === 'loss'))
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      let cum = 0
+      return closed.map(x => {
+        const r = realizedR(x)
+        cum += r ?? 0
+        return { date: new Date(x.timestamp).getTime(), key: eng.key, cum: Math.round(cum * 100) / 100 }
+      })
+    })
+    const merged = series.flat().sort((a, b) => a.date - b.date)
+    if (merged.length === 0) return []
+    const last: Record<string, number> = {}
+    return merged.map(pt => {
+      last[pt.key] = pt.cum
+      return {
+        date: new Date(pt.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        donchian: last['donchian'] ?? null,
+        mean_reversion: last['mean_reversion'] ?? null,
+      }
+    })
+  }, [signals])
+
   // ── guards ────────────────────────────────────────────────────────────────
   if (user === null || loading) return <PageSkeleton />
   if (!isAdmin(user?.email))   return <Blocked />
@@ -296,6 +364,68 @@ export default function Analytics() {
                 <Area type="monotone" dataKey="P&L" stroke={eqColor} fill="url(#eqGrad)" strokeWidth={2.5} dot={false} />
               </AreaChart>
             </ResponsiveContainer>
+          )}
+        </Section>
+
+        {/* ── Engine comparison ── */}
+        <Section
+          title="Engine Comparison"
+          sub="donchian (trend breakout) vs mean_reversion (range-fade) — win rate, profit factor, and realized R-multiple per trade, computed from actual entry/stop/target/close, not a fixed % assumption."
+        >
+          {!mounted ? <Skel h={280} /> : (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {engineStats.map(e => {
+                  const wrC = e.winRate >= 50 ? '#22c55e' : e.winRate >= 35 ? '#f59e0b' : '#ef4444'
+                  const pfC = e.pf >= 1.2 ? '#22c55e' : e.pf >= 1 ? '#f59e0b' : '#ef4444'
+                  return (
+                    <div key={e.key} className="bg-[#21262d] rounded-xl p-4 border border-[#30363d]">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="flex items-center gap-2 text-sm font-bold text-[#c9d1d9]">
+                          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: e.color }} />
+                          {e.label}
+                        </span>
+                        <span className="text-xs bg-[#30363d] text-[#8b949e] px-2 py-0.5 rounded-md">
+                          {e.rows} signal{e.rows === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-3">
+                        <Pill label="Win Rate" value={e.closed > 0 ? `${e.winRate}%` : '—'} sub={`${e.wins}W / ${e.losses}L`} />
+                        <Pill label="Profit Factor" value={e.pf === Infinity ? '∞' : e.closed > 0 ? e.pf.toFixed(2) : '—'} />
+                        <Pill label="Total R" value={`${e.totalR >= 0 ? '+' : ''}${e.totalR.toFixed(1)}R`} />
+                      </div>
+                      <div className="mt-3 h-1.5 bg-[#0d1117] rounded-full overflow-hidden">
+                        <div className="h-full rounded-full" style={{ width: `${e.winRate}%`, background: wrC, transition: 'width .4s ease' }} />
+                      </div>
+                      <p className="text-[10px] text-[#8b949e] mt-1.5">
+                        PF <span style={{ color: pfC }} className="font-semibold">{e.pf === Infinity ? '∞' : e.pf.toFixed(2)}</span>
+                        {' · '}{e.pending} open
+                      </p>
+                    </div>
+                  )
+                })}
+              </div>
+
+              {engineEquity.length < 2 ? (
+                <NoData msg="Needs at least 2 closed signals across both engines to draw the curve." />
+              ) : (
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={engineEquity} margin={{ right: 8, top: 8 }}>
+                    <XAxis dataKey="date" tick={{ fill: '#8b949e', fontSize: 10 }} axisLine={false} tickLine={false} minTickGap={24} />
+                    <YAxis tick={{ fill: '#8b949e', fontSize: 10 }} tickFormatter={v => `${v}R`} width={40} axisLine={false} tickLine={false} />
+                    <ReferenceLine y={0} stroke="#30363d" strokeDasharray="4 4" />
+                    <Tooltip content={<Tip />} />
+                    <Legend wrapperStyle={{ fontSize: 11, color: '#8b949e' }} formatter={(v: string) => v === 'donchian' ? 'Donchian' : 'Mean Reversion'} />
+                    <Line type="monotone" dataKey="donchian" stroke="#22c55e" strokeWidth={2.5} dot={false} connectNulls />
+                    <Line type="monotone" dataKey="mean_reversion" stroke="#6366f1" strokeWidth={2.5} dot={false} connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+              <p className="text-[10px] text-[#8b949e] text-center -mt-2">
+                Cumulative realized R per engine, in trade-resolution order. R = actual reward:risk realized
+                (win = target distance / stop distance, loss = −1R) — not a fixed dollar assumption.
+              </p>
+            </div>
           )}
         </Section>
 

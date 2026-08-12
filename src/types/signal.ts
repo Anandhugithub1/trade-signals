@@ -1,5 +1,9 @@
 export type SignalDirection = 'long' | 'short'
 export type SignalResult = 'pending' | 'win' | 'loss' | 'expired'
+// 'donchian' and 'mean_reversion' are the two live engines; 'legacy' is
+// retired (its history was deleted from trade_signals) but the type stays
+// permissive in case older cached data or a stray row still carries it.
+export type SignalStrategy = 'donchian' | 'mean_reversion' | 'legacy' | string
 
 export interface TradeSignal {
   id: string
@@ -9,6 +13,7 @@ export interface TradeSignal {
   stop_loss: number
   take_profit: number
   confidence: number
+  strategy: SignalStrategy
   rr_ratio?: number | null
   latest_price?: number | null
   entry_confirmed?: boolean  // true once price has touched the limit entry
