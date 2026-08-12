@@ -64,6 +64,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 14),
                   FadeIn(delayMs: 60, child: _HeroPerformanceCard(stats: stats)),
                   const SizedBox(height: 14),
+                  FadeIn(delayMs: 90, child: _EngineComparisonCard(signals: signals)),
+                  const SizedBox(height: 14),
                   FadeIn(delayMs: 120, child: _SentimentCard(sentiment: sentiment)),
                   const SizedBox(height: 16),
                   if (feed.isNotEmpty)
@@ -597,6 +599,140 @@ class _SentPill extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+// Simple, chart-free per-engine comparison — donchian vs mean_reversion.
+// Deliberately just stat tiles (no equity-curve chart, unlike the
+// dashboard's fuller version): this app has no charting library, and the
+// ask was for something lightweight, not a second analytics page.
+class _EngineComparisonCard extends StatelessWidget {
+  final List<TradeSignal> signals;
+
+  const _EngineComparisonCard({required this.signals});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final donchian = SignalStats.forStrategy(signals, 'donchian');
+    final meanRev = SignalStats.forStrategy(signals, 'mean_reversion');
+
+    if (donchian.total == 0 && meanRev.total == 0) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: c.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: c.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'ENGINE COMPARISON',
+            style: TextStyle(
+              color: c.t3,
+              fontSize: 11,
+              letterSpacing: 0.8,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _EngineStatBlock(
+                  label: 'Donchian',
+                  color: c.long,
+                  stats: donchian,
+                ),
+              ),
+              Container(
+                width: 1,
+                height: 74,
+                color: c.border,
+                margin: const EdgeInsets.symmetric(horizontal: 14),
+              ),
+              Expanded(
+                child: _EngineStatBlock(
+                  label: 'Mean Reversion',
+                  color: c.accent,
+                  stats: meanRev,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EngineStatBlock extends StatelessWidget {
+  final String label;
+  final Color color;
+  final SignalStats stats;
+
+  const _EngineStatBlock({
+    required this.label,
+    required this.color,
+    required this.stats,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final pf = stats.profitFactor;
+    final pfLabel = stats.closed == 0
+        ? '—'
+        : pf.isInfinite
+            ? '∞'
+            : pf.toStringAsFixed(2);
+    final wrLabel = stats.closed == 0 ? '—' : '${(stats.winRate * 100).toStringAsFixed(0)}%';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(color: c.t1, fontSize: 13, fontWeight: FontWeight.w700),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Text(
+              wrLabel,
+              style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.w900, letterSpacing: -0.5),
+            ),
+            const SizedBox(width: 5),
+            Text('win rate', style: TextStyle(color: c.t3, fontSize: 11)),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '${stats.wins}W / ${stats.losses}L  ·  PF $pfLabel',
+          style: TextStyle(color: c.t2, fontSize: 11),
+        ),
+        Text(
+          '${stats.totalR >= 0 ? '+' : ''}${stats.totalR.toStringAsFixed(1)}R total',
+          style: TextStyle(color: c.t3, fontSize: 11),
+        ),
+      ],
     );
   }
 }

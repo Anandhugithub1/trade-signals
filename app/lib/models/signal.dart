@@ -186,28 +186,62 @@ class SignalStats {
   final int wins;
   final int losses;
   final int pending;
+  // Realized R across closed signals: win = take-profit distance / stop
+  // distance (the actual reward realized, not a fixed target), loss = -1R
+  // by construction (the stop, by definition, is exactly 1R away). Not
+  // computed for pending/expired rows. Used for per-engine comparison,
+  // since donchian's 3R target and mean_reversion's ~1:1 target aren't
+  // comparable on win rate alone.
+  final double totalR;
 
   const SignalStats({
     required this.total,
     required this.wins,
     required this.losses,
     required this.pending,
+    this.totalR = 0,
   });
 
   factory SignalStats.from(List<TradeSignal> signals) {
     final closed = signals.where((s) => !s.isPending).toList();
     final w = closed.where((s) => s.isWin).length;
     final l = closed.where((s) => s.isLoss).length;
+    double totalR = 0;
+    for (final s in closed) {
+      final risk = (s.entry - s.stopLoss).abs();
+      if (risk == 0) continue;
+      if (s.isWin) {
+        totalR += (s.takeProfit - s.entry).abs() / risk;
+      } else if (s.isLoss) {
+        totalR -= 1;
+      }
+    }
     return SignalStats(
       total: signals.length,
       wins: w,
       losses: l,
       pending: signals.where((s) => s.isPending).length,
+      totalR: totalR,
     );
   }
 
+  /// Same as [from], filtered to one engine — used for the per-engine
+  /// comparison card so donchian and mean_reversion can be shown side by
+  /// side without a second query.
+  factory SignalStats.forStrategy(List<TradeSignal> signals, String strategy) =>
+      SignalStats.from(signals.where((s) => s.strategy == strategy).toList());
+
   double get winRate => (wins + losses) == 0 ? 0 : wins / (wins + losses);
   int get closed => wins + losses;
+  double get profitFactor {
+    // Reconstructed from totalR + win/loss counts rather than tracked
+    // separately: grossWin = totalR + losses (since every loss contributes
+    // exactly -1R, adding losses back isolates the win-side total), and
+    // grossLoss = losses (each loss is exactly 1R by construction).
+    if (losses == 0) return wins > 0 ? double.infinity : 0;
+    final grossWin = totalR + losses;
+    return grossWin / losses;
+  }
 }
 
 // Full historical dataset — signals auto-expire after 90 days
