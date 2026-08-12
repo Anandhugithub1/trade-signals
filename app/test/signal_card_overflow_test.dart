@@ -23,7 +23,7 @@ TradeSignal _sig(String strategy, {bool confirmed = false}) => TradeSignal(
 
 void main() {
   for (final w in [320.0, 360.0, 411.0]) {
-    for (final s in ['legacy', 'donchian']) {
+    for (final s in ['legacy', 'donchian', 'mean_reversion']) {
       testWidgets('no overflow at ${w}dp / $s', (tester) async {
         tester.view.physicalSize = Size(w, 800);
         tester.view.devicePixelRatio = 1.0;

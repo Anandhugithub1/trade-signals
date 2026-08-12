@@ -288,9 +288,10 @@ class _ResultBadge extends StatelessWidget {
 }
 
 /// Which engine produced the signal. Two crypto strategies run side by side
-/// (see backend/generate_signals/donchian.py), so the badge makes it obvious
-/// which one a given trade came from — otherwise they are indistinguishable
-/// in the feed and there is no way to judge them against each other.
+/// (see backend/generate_signals/donchian.py and mean_reversion.py), so the
+/// badge makes it obvious which one a given trade came from — otherwise
+/// they are indistinguishable in the feed and there is no way to judge them
+/// against each other.
 class _EngineChip extends StatelessWidget {
   final TradeSignal signal;
 
@@ -299,9 +300,19 @@ class _EngineChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    // Breakout is the newer, better-performing engine — give it the accent
-    // colour; legacy stays muted so the feed reads at a glance.
-    final color = signal.isDonchian ? c.long : c.t3;
+    // Breakout is the best-performing engine so far — accent green. Mean
+    // reversion gets the blue accent (a distinct second colour, not a muted
+    // variant, since it's a genuinely different mechanism). Anything else
+    // (a retired engine's old data) is muted so it reads as historical,
+    // not as a live third option.
+    final Color color;
+    if (signal.isDonchian) {
+      color = c.long;
+    } else if (signal.isMeanReversion) {
+      color = c.accent;
+    } else {
+      color = c.t3;
+    }
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(

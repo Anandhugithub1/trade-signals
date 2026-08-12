@@ -4,71 +4,44 @@ generate_signals — creates trade signals for top 15 crypto pairs by market cap
 NOTE: Gold (XAUUSDT) and Silver (XAGUSDT) commodity perpetuals are dropped for
 now — their perpetual futures markets are thinner and more prone to price
 manipulation than major crypto pairs, which skews the technical indicators.
-The is_commodity handling in analyze_pair() is left in place so they can be
-re-added later without touching the voting logic.
 
 ═══════════════════════════════════════════════════════════════════
  DATA SOURCES  (all free, no API keys required)
 ═══════════════════════════════════════════════════════════════════
   Candles        Binance Futures → Bybit → OKX  (geo-fallback chain)
-  Sentiment      Alternative.me Fear & Greed Index
-  Market data    CoinGecko global market cap & dominance
-  Derivatives    OKX funding rate + long/short ratio  (per pair)
-  Coin news      Google News RSS + CoinDesk RSS
-  Macro events   Google News RSS + Reuters  (Fed / rates / wars)
+  Sentiment      Alternative.me Fear & Greed Index  (dashboard breadth only,
+                 see _pair_trend_direction() — no longer a trading vote input)
+  Derivatives    OKX funding rate + long/short ratio  (per pair, used by
+                 donchian.py/mean_reversion.py's own logic where relevant)
 
 ═══════════════════════════════════════════════════════════════════
- STRATEGY  —  regime-filtered momentum (1h timeframe, ~3–4% swings)
+ ENGINES
 ═══════════════════════════════════════════════════════════════════
-  STEP 1 — REGIME GATE (the core of the system)
-     • ADX(14) must be >= 20  → confirms a real trend exists
-     • EMA stack must align    → price > EMA50 > EMA200 (up) or the inverse (down)
-     • If neither holds → NO SIGNAL. Momentum never trades ranging markets.
+  donchian.py        — 55-bar channel breakout, 4h bars, 3R target.
+                        Trend-following: needs only ~25% win rate to break
+                        even. See donchian.py's own docstring for full
+                        strategy + backtest numbers + HONEST LIMITS.
+  mean_reversion.py   — RSI + Bollinger Band range-fade, 4h bars, ~1:1
+                        target, ADX<20 gate (the OPPOSITE of a trend
+                        filter — it wants the ABSENCE of a trend). See
+                        mean_reversion.py's own docstring for full
+                        strategy + backtest numbers + HONEST LIMITS.
 
-  STEP 2 — VOTE (all votes only ever point WITH the confirmed trend)
-     Trend engine  : EMA200, EMA50, EMA20/50 cross
-     Momentum      : MACD (single vote; crossover just strengthens the reason)
-     Volume        : OBV slope, Volume-spike amplifier
-     Pullback edge : Oscillators + Bollinger — regime-aware, so an oversold
-                     reading in an uptrend is a BUY (never a counter-trend short)
-     Positioning   : Funding rate, Long/Short ratio (contrarian)
-     Market context: F&G + market-cap + news + macro collapsed into ONE
-                     low-weight vote (needs strong net agreement to fire)
+REMOVED: the original vote-based momentum engine ("legacy") was retired —
+its own backtest showed a thin, largely fee-consumed edge (35.2% win rate
+against a fixed 2R target, PF 1.09) and was replaced by the two engines
+above. All of its historical trade_signals rows were exported to CSV
+(test_scripts/_exports/) before deletion; see git history for the removed
+analyze_pair() implementation if it's ever needed for reference.
 
-  STEP 3 — DECISION
-     LONG  when net score >= +4  AND uptrend
-     SHORT when net score <= -4  AND downtrend
-     Signal strength = |score| / active votes → 60–95 %
-       NOTE: this is INDICATOR-AGREEMENT strength (how strongly the votes
-       align), NOT a win probability. Backtests over 2 000+ trades show it
-       does NOT predict win rate — an 85%-strength signal wins about as
-       often as a 75% one. Treat/label it as "how clean the setup is",
-       never as "chance this trade wins".
-
-  STEP 4 — ENTRY
-     Limit entry at the nearest recent swing low (longs) / swing high
-     (shorts) within 1.2x ATR of price — a real reaction level, not an
-     arbitrary offset. Falls back to a shallow 0.3x ATR offset if no
-     qualifying swing level is nearby (see find_swing_level()). Walk-forward
-     validated (3 independent non-overlapping blocks) to beat both plain
-     market entry and a no-fallback variant — see
-     test_scripts/walkforward_entry_variants.py.
-
-  STEP 5 — RISK
-     SL = min(2× ATR, 2.3% cap) — volatility-scaled per pair
-     TP = 2.0 × the SL distance (R-multiple), so reward:risk = 1:2 and stays
-          constant across all pairs regardless of their ATR (Turtle/Donchian/
-          CTA-standard: both barriers sized in the same ATR unit)
-
-Trigger: every 4h via GitHub Actions cron. Max 3 signals/day.
+Trigger: every 4h via GitHub Actions cron. Max 3 signals/day PER ENGINE
+(donchian + mean_reversion = 6/day max).
 """
 
 import json
 import os
 import time
-import uuid
 import requests
-import feedparser
 import numpy as np
 from datetime import datetime, timezone, timedelta
 from supabase import create_client, Client
@@ -76,6 +49,7 @@ from google.oauth2 import service_account
 import google.auth.transport.requests
 
 from donchian import analyze_donchian
+from mean_reversion import analyze_mean_reversion
 
 try:
     from dotenv import load_dotenv
@@ -102,37 +76,7 @@ FIREBASE_SA_JSON = _load_firebase_sa()
 BINANCE_FUTURES  = "https://fapi.binance.com/fapi/v1/klines"
 BYBIT_KLINES     = "https://api.bybit.com/v5/market/kline"
 OKX_KLINES       = "https://www.okx.com/api/v5/market/candles"
-OKX_FUNDING      = "https://www.okx.com/api/v5/public/funding-rate"
-OKX_LSR          = "https://www.okx.com/api/v5/rubik/stat/contracts/long-short-account-ratio"
-COINGECKO_GLOBAL = "https://api.coingecko.com/api/v3/global"
 FEAR_GREED_URL   = "https://api.alternative.me/fng/?limit=1"
-GOOGLE_NEWS_RSS  = "https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q={coin}+cryptocurrency"
-COINDESK_RSS     = "https://www.coindesk.com/arc/outboundfeeds/rss/?outputType=xml"
-REUTERS_RSS      = "https://feeds.reuters.com/reuters/businessNews"
-
-# Macro event RSS feeds — Fed, rates, geopolitics
-MACRO_RSS_FEEDS = [
-    "https://news.google.com/rss/search?q=fed+meeting+interest+rate+fomc&hl=en-US&gl=US&ceid=US:en",
-    "https://news.google.com/rss/search?q=war+sanctions+geopolitical+economy+recession&hl=en-US&gl=US&ceid=US:en",
-    "https://feeds.reuters.com/reuters/businessNews",
-]
-
-# Keywords that push crypto HIGHER (risk-on, rate easing, stability)
-_MACRO_BULL = {
-    "rate cut", "dovish", "pivot", "pause hike", "easing", "stimulus",
-    "bailout", "ceasefire", "peace deal", "peace talks", "soft landing",
-    "inflation cooling", "inflation eased", "rate reduction", "fed cut",
-    "interest cut", "quantitative easing", "liquidity", "risk on",
-}
-
-# Keywords that push crypto LOWER (risk-off, rate hikes, instability)
-_MACRO_BEAR = {
-    "rate hike", "hawkish", "tightening", "quantitative tightening",
-    "recession", "default", "war escalation", "invasion", "sanctions",
-    "banking crisis", "credit crunch", "inflation surge", "stagflation",
-    "rate increase", "fed hike", "interest rate rise", "trade war",
-    "tariff", "conflict escalation", "military action", "debt ceiling",
-}
 
 _HEADERS = {"User-Agent": "TradePilot/1.0 signal-bot"}
 
@@ -181,59 +125,28 @@ TOP_PAIRS = [
 
 # ── Engine tags (written to the `strategy` column) ────────────────────────────
 # Two engines run side by side so live results can decide between them:
-#   legacy   — the original vote-based momentum model (1h bars)
-#   donchian — channel breakout (4h bars), measurably better in backtest
+#   donchian       — channel breakout (4h bars): 30.0% win, PF 1.27 backtested
+#   mean_reversion — range-fade (4h bars): 52.5% win rate / PF 1.11 backtested,
+#                    ~73 trades/yr — a genuinely different mechanism, not a
+#                    tuned variant of a trend-following approach.
 # Donchian is prioritised for the daily slots; see Pass 2.
-LEGACY_TAG   = "legacy"
-DONCHIAN_TAG = "donchian"
+DONCHIAN_TAG       = "donchian"
+MEAN_REVERSION_TAG = "mean_reversion"
+LEGACY_TAG         = "legacy"   # retired; kept only as the `held_by` fallback
+                                 # default for any stray pre-existing row
 
-MIN_BULL_SCORE        = 4    # net bullish votes required for LONG
-MIN_BEAR_SCORE        = 4    # net bearish votes required for SHORT
-MIN_SIGNAL_STRENGTH   = 72   # signals below this strength % are discarded
-
-# Per-ENGINE daily cap, not a shared pool: 3 donchian + 3 legacy = 6/day max.
-# A shared cap meant the prioritised engine took every slot it qualified for
-# and the other got only leftovers, so each engine's sample size depended on
-# how busy the other happened to be. Separate caps let both accumulate trades
-# on their own merit, which is the whole point of running them side by side.
+# Per-ENGINE daily cap, not a shared pool: 3 donchian + 3 mean_reversion =
+# 6/day max. A shared cap meant the prioritised engine took every slot it
+# qualified for and the other got only leftovers, so each engine's sample
+# size depended on how busy the other happened to be. Separate caps let both
+# accumulate trades on their own merit, which is the whole point of running
+# them side by side.
 MAX_SIGNALS_PER_ENGINE = 3
 MAX_SIGNALS            = MAX_SIGNALS_PER_ENGINE * 2   # 6 — used for logging
 
-# ── Regime filter (momentum needs a trend) ────────────────────────────────────
-ADX_TREND_MIN = 20   # ADX below this = ranging/choppy → skip (no momentum edge)
-
-# ── Momentum targets (1h timeframe, ~3–4% swing moves) ────────────────────────
-# SL is volatility-scaled (ATR-based); TP is an R-MULTIPLE of that SL distance,
-# so reward:risk stays constant across pairs regardless of each pair's ATR —
-# the industry-standard trend-following convention (Turtle/Donchian/CTA
-# exits size both barriers in the same ATR unit). Previously TP was a FLAT
-# 3.5% while SL was ATR-scaled, which let RR drift with volatility and even
-# forced the SL to be deformed to satisfy the RR floor. TP_R_MULT is chosen on
-# principle (standard trend RR, above the old 1.5 floor), not backtest-tuned.
-ATR_SL_MULT   = 2.0    # SL = 2× ATR (gives a 1h trade room to breathe)
-MAX_SL_PCT    = 0.023  # hard SL cap → bounds worst-case risk per trade
-TP_R_MULT     = 2.0    # TP = 2.0 × SL distance (reward:risk = 1 : 2, ATR-consistent)
-
-# Swing support/resistance limit entry: instead of entering at raw market
-# price, prefer a fill at the nearest recent swing low (longs) / swing high
-# (shorts) — a real level the market has already reacted to, rather than an
-# arbitrary ATR offset. Only used if that level is within MAX_DIST_ATR of
-# price. Falls back to a shallow 0.3x ATR offset if no qualifying level is
-# nearby, so a signal is never skipped outright for lack of one.
-#
-# A "no fallback" variant (skip the signal entirely when no swing level
-# qualifies) was tried and reverted: a walk-forward validation across 3
-# independent, non-overlapping ~3-month blocks (see
-# test_scripts/walkforward_entry_variants.py) showed swing+fallback beats
-# both plain market entry AND the no-fallback variant in 2 of 3 blocks, while
-# no-fallback never won a single block and was a clear loser in one
-# (-0.205R/trade). SL/TP anchor to this entry.
-SWING_LOOKBACK = 60    # candles to search for a swing level
-SWING_ORDER    = 3     # a candle must be the extreme within +/- this many neighbours
-MAX_DIST_ATR   = 1.2   # only use the swing level if within this many ATRs of price
-ENTRY_ATR_MULT = 0.3   # fallback offset when no qualifying swing level is nearby
-
-CANDLE_LIMIT  = 300    # 300 × 1h ≈ 12.5 days (EMA200 well-converged)
+CANDLE_LIMIT  = 300    # kept for any script still importing it; no longer
+                        # used by this module directly since analyze_pair()
+                        # (the only caller) was removed
 SEP = "-" * 60
 
 
@@ -248,93 +161,8 @@ def _ema_array(data: np.ndarray, period: int) -> np.ndarray:
     return out
 
 
-def calc_rsi(close: np.ndarray, period: int = 14) -> float:
-    """Wilder's smoothed RSI — uses full history for a stable result."""
-    delta  = np.diff(close.astype(float))
-    gains  = np.where(delta > 0, delta, 0.0)
-    losses = np.where(delta < 0, -delta, 0.0)
-    # Seed with simple average over first `period` bars
-    avg_g  = np.mean(gains[:period])
-    avg_l  = np.mean(losses[:period])
-    # Wilder smoothing over remaining bars
-    for i in range(period, len(delta)):
-        avg_g = (avg_g * (period - 1) + gains[i])  / period
-        avg_l = (avg_l * (period - 1) + losses[i]) / period
-    if avg_l == 0:
-        return 100.0
-    return 100.0 - 100.0 / (1.0 + avg_g / avg_l)
-
-
-def calc_macd(close: np.ndarray):
-    """Returns (macd_val, signal_val, hist_now, hist_prev)."""
-    ema12 = _ema_array(close, 12)
-    ema26 = _ema_array(close, 26)
-    macd_line = ema12 - ema26
-    sig_line  = _ema_array(macd_line, 9)
-    hist      = macd_line - sig_line
-    return macd_line[-1], sig_line[-1], hist[-1], hist[-2]
-
-
 def calc_ema(close: np.ndarray, period: int) -> float:
     return float(_ema_array(close, period)[-1])
-
-
-def calc_bollinger(close: np.ndarray, period: int = 20):
-    """Returns (upper, middle, lower, %B position 0-1)."""
-    window = close[-period:]
-    mid    = np.mean(window)
-    std    = np.std(window)
-    upper  = mid + 2 * std
-    lower  = mid - 2 * std
-    pct_b  = (close[-1] - lower) / (upper - lower) if upper != lower else 0.5
-    return upper, mid, lower, float(pct_b)
-
-
-def find_swing_level(direction: str, price: float, atr: float,
-                      high: np.ndarray, low: np.ndarray) -> float | None:
-    """Nearest qualifying swing low (long) / swing high (short) within the
-    last SWING_LOOKBACK candles, on the favourable side of price. A swing
-    point must be the local extreme within +/- SWING_ORDER candles. Returns
-    None if no swing point qualifies, or the nearest one is farther than
-    MAX_DIST_ATR * ATR from price (too far to be a realistic pullback)."""
-    n = len(low)
-    lo_win = max(0, n - SWING_LOOKBACK)
-    best = None
-    best_dist = None
-
-    for i in range(lo_win + SWING_ORDER, n - SWING_ORDER):
-        if direction == "long":
-            window_lows = low[i - SWING_ORDER: i + SWING_ORDER + 1]
-            if low[i] != window_lows.min():
-                continue
-            level = low[i]
-            if level >= price:
-                continue
-            dist = price - level
-        else:
-            window_highs = high[i - SWING_ORDER: i + SWING_ORDER + 1]
-            if high[i] != window_highs.max():
-                continue
-            level = high[i]
-            if level <= price:
-                continue
-            dist = level - price
-
-        if best_dist is None or dist < best_dist:
-            best, best_dist = level, dist
-
-    if best is None or best_dist > MAX_DIST_ATR * atr:
-        return None
-    return float(best)
-
-
-def calc_atr(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> float:
-    tr = np.maximum(
-        high[1:] - low[1:],
-        np.maximum(np.abs(high[1:] - close[:-1]),
-                   np.abs(low[1:] - close[:-1]))
-    )
-    return float(np.mean(tr[-period:]))
 
 
 def calc_adx(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> float:
@@ -376,86 +204,15 @@ def calc_adx(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int =
     return float(np.mean(dx[-period:]))
 
 
-def calc_stoch_rsi(close: np.ndarray, rsi_period: int = 14, stoch_period: int = 14) -> float:
-    """Stochastic RSI — 0 (oversold) to 1 (overbought). More sensitive than plain RSI."""
-    # Build RSI series for entire close array
-    delta = np.diff(close.astype(float))
-    gain  = np.where(delta > 0, delta, 0.0)
-    loss  = np.where(delta < 0, -delta, 0.0)
-    avg_g = np.mean(gain[:rsi_period])
-    avg_l = np.mean(loss[:rsi_period])
-    rsi_vals = np.empty(len(close))
-    rsi_vals[:rsi_period + 1] = np.nan
-    for i in range(rsi_period, len(delta)):
-        avg_g = (avg_g * (rsi_period - 1) + gain[i]) / rsi_period
-        avg_l = (avg_l * (rsi_period - 1) + loss[i]) / rsi_period
-        rs = avg_g / avg_l if avg_l != 0 else 1e9
-        rsi_vals[i + 1] = 100.0 - 100.0 / (1.0 + rs)
-    rsi_clean = rsi_vals[~np.isnan(rsi_vals)]
-    if len(rsi_clean) < stoch_period:
-        return 0.5
-    window = rsi_clean[-stoch_period:]
-    lo, hi = window.min(), window.max()
-    return float((rsi_clean[-1] - lo) / (hi - lo)) if hi != lo else 0.5
-
-
-def calc_williams_r(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> float:
-    """Williams %R — -100 (oversold) to 0 (overbought)."""
-    hh = np.max(high[-period:])
-    ll = np.min(low[-period:])
-    return float(-100.0 * (hh - close[-1]) / (hh - ll)) if hh != ll else -50.0
-
-
-def calc_obv_slope(close: np.ndarray, vol: np.ndarray, period: int = 20) -> float:
-    """
-    On-Balance Volume linear-regression slope over `period` candles.
-    Positive = OBV trending up (volume confirming price rise).
-    Negative = OBV trending down (volume confirming price fall).
-    """
-    obv = np.zeros(len(close))
-    for i in range(1, len(close)):
-        obv[i] = obv[i-1] + (vol[i] if close[i] > close[i-1] else
-                              -vol[i] if close[i] < close[i-1] else 0)
-    window = obv[-period:]
-    x = np.arange(len(window), dtype=float)
-    slope = np.polyfit(x, window, 1)[0]
-    return float(slope)
-
-
-def calc_expiry_days(confidence: int, rr_ratio: float) -> int:
-    """
-    Higher confidence + better RR ratio = longer window to play out.
-
-    Confidence 60-95 and RR 1.0-3.0 each contribute to the window:
-      conf_factor  maps 60→0.0, 95→1.0
-      rr_factor    maps 1.0→0.0, 3.0→1.0
-    Combined (60% conf weight, 40% RR weight) → scales 3–4 days.
-
-    Examples:
-      confidence=65, RR=1.5  →  3 days
-      confidence=80, RR=2.0  →  3–4 days
-      confidence=90, RR=2.5  →  4 days
-    """
-    conf_factor = min((confidence - 60) / 35.0, 1.0)
-    rr_factor   = min(max((rr_ratio - 1.0) / 2.0, 0.0), 1.0)
-    factor      = conf_factor * 0.6 + rr_factor * 0.4
-    days        = round(3 + factor * 1)            # 3 → 4
-    return max(3, min(4, int(days)))
-
-
-def volume_ratio(vol: np.ndarray, period: int = 20) -> float:
-    avg = np.mean(vol[-period - 1:-1])
-    return float(vol[-1] / avg) if avg > 0 else 1.0
-
-
 def _okx_symbol(pair: str) -> str:
     """BTCUSDT → BTC-USDT  (OKX instId format)"""
     return pair[:-4] + "-USDT"
 
 
-def fetch_candles(symbol: str, interval: str = "1h") -> list:
+def fetch_candles(symbol: str, interval: str = "4h") -> list:
     """
-    Fetch 4-hour OHLCV candles — three-provider fallback chain.
+    Fetch OHLCV candles — three-provider fallback chain. Both remaining
+    engines (donchian, mean_reversion) run on 4h bars.
 
     All three share the same index layout:
       [0] open_time_ms  [1] open  [2] high  [3] low  [4] close  [5] volume
@@ -472,11 +229,9 @@ def fetch_candles(symbol: str, interval: str = "1h") -> list:
         "4h": ("4h", "240", "4H"),
     }[interval]
 
-    # CANDLE_LIMIT (300) is sized for 1h bars. On 4h it would cover only ~50
-    # days, and the EMA200 regime filter alone consumes 200 of those bars —
-    # leaving too little history for the 55-bar channel to ever break out.
-    # Ask for the provider maximum instead so the 4h engine has real history.
-    limit = CANDLE_LIMIT if interval == "1h" else 1000
+    # Ask for the provider maximum so both engines' EMA200 regime filters
+    # (which alone need 200 bars of history) have real runway.
+    limit = 1000
 
     # 1. Binance Futures
     try:
@@ -603,478 +358,30 @@ def get_fear_greed() -> tuple[int, int, str]:
         return 0, -1, f"Fear/Greed unavailable ({exc})"
 
 
-_BULL_WORDS = {"surge","rally","bullish","breakout","gain","high","pump","rise","soar","record","up","green","buy","long","upside","positive","adoption","partnership","launch","approve","etf"}
-_BEAR_WORDS = {"crash","drop","bearish","fall","dump","low","fear","plunge","sell","short","ban","hack","fraud","loss","warning","risk","bear","decline","negative","lawsuit","regulation"}
+# ── market breadth (dashboard sentiment tally only — NOT a trading signal) ────
 
-
-def _score_headlines(titles: list[str]) -> tuple[int, int]:
-    """Count bullish vs bearish keywords across a list of headline strings."""
-    bull = bear = 0
-    for t in titles:
-        words = set(t.lower().split())
-        bull += bool(words & _BULL_WORDS)
-        bear += bool(words & _BEAR_WORDS)
-    return bull, bear
-
-
-def get_news_sentiment(coin_sym: str) -> tuple[int, str]:
-    """
-    Scores news sentiment for a coin using two free RSS feeds:
-      1. Google News  — coin-specific headlines (no key, no limit)
-      2. CoinDesk RSS — top crypto news (no key, no limit)
-
-    Returns (+1 bullish / -1 bearish / 0 neutral, reason_str).
-    """
-    titles: list[str] = []
-
-    # 1. Google News — coin-specific
-    try:
-        url  = GOOGLE_NEWS_RSS.format(coin=coin_sym)
-        feed = feedparser.parse(url)
-        titles += [e.title for e in feed.entries[:10]]
-    except Exception:
-        pass
-
-    # 2. CoinDesk RSS — general market headlines (filter for coin name)
-    try:
-        feed = feedparser.parse(COINDESK_RSS)
-        titles += [
-            e.title for e in feed.entries[:20]
-            if coin_sym.replace("USDT", "").lower() in e.title.lower()
-        ]
-    except Exception:
-        pass
-
-    if not titles:
-        return 0, "News: no headlines found"
-
-    bull, bear = _score_headlines(titles)
-    total = len(titles)
-
-    if bull > bear + 2:
-        return 1,  f"News: bullish  ({bull} bull / {bear} bear from {total} headlines)"
-    if bear > bull + 2:
-        return -1, f"News: bearish  ({bear} bear / {bull} bull from {total} headlines)"
-    return 0, f"News: neutral  ({bull} bull / {bear} bear from {total} headlines)"
-
-
-def get_macro_sentiment() -> tuple[int, str]:
-    """
-    Scans macro RSS feeds for Fed meetings, interest rate decisions,
-    wars, sanctions, and other global events that move crypto markets.
-
-    Runs ONCE per handler invocation (applies to all pairs equally).
-
-    Returns (+1 risk-on / -1 risk-off / 0 neutral, reason_str).
-
-    Bullish signals  (risk-on / easing):
-      rate cut, dovish, pivot, ceasefire, peace deal, soft landing,
-      stimulus, inflation cooling, quantitative easing …
-
-    Bearish signals  (risk-off / tightening):
-      rate hike, hawkish, tightening, recession, war escalation,
-      invasion, sanctions, banking crisis, stagflation, trade war …
-    """
-    titles: list[str] = []
-
-    for url in MACRO_RSS_FEEDS:
-        try:
-            feed = feedparser.parse(url)
-            titles += [e.title for e in feed.entries[:15]]
-        except Exception:
-            pass
-
-    if not titles:
-        return 0, "Macro: no headlines fetched"
-
-    text  = " ".join(titles).lower()
-    bull  = sum(1 for kw in _MACRO_BULL if kw in text)
-    bear  = sum(1 for kw in _MACRO_BEAR if kw in text)
-
-    if bull > bear + 1:
-        return 1,  f"Macro: risk-on  ({bull} bullish keywords: easing/peace/cut detected)"
-    if bear > bull + 1:
-        return -1, f"Macro: risk-off ({bear} bearish keywords: hike/war/recession detected)"
-    return 0, f"Macro: neutral  ({bull} bull / {bear} bear macro keywords)"
-
-
-def get_market_cap_change() -> tuple[int, str]:
-    """
-    CoinGecko global crypto market cap 24h change.
-    A strong positive move = broad risk-on (+1).
-    A strong negative move = broad risk-off (-1).
-    """
-    try:
-        r = requests.get(COINGECKO_GLOBAL, headers=_HEADERS, timeout=6)
-        if r.status_code == 200:
-            chg = r.json()["data"]["market_cap_change_percentage_24h_usd"]
-            if chg > 3:
-                return 1,  f"Global mkt cap +{chg:.1f}% 24h (risk-on)"
-            if chg < -3:
-                return -1, f"Global mkt cap {chg:.1f}% 24h (risk-off)"
-            return 0,  f"Global mkt cap {chg:+.1f}% 24h (neutral)"
-    except Exception as e:
-        pass
-    return 0, "Global mkt cap: unavailable"
-
-
-def get_funding_rate(pair: str) -> tuple[int, str]:
-    """
-    OKX perpetual funding rate — free, no key.
-    Negative rate → shorts paying longs → over-shorted → contrarian BULLISH.
-    Positive rate → longs paying shorts → over-longed  → contrarian BEARISH.
-    Threshold: ±0.03% (3× normal 0.01% baseline).
-    """
-    instId = pair[:-4] + "-USDT-SWAP"   # BTCUSDT → BTC-USDT-SWAP
-    try:
-        r = requests.get(OKX_FUNDING, params={"instId": instId},
-                         headers=_HEADERS, timeout=5)
-        if r.status_code == 200 and r.json().get("data"):
-            rate = float(r.json()["data"][0]["fundingRate"])
-            pct  = rate * 100
-            if rate < -0.0003:
-                return 1,  f"Funding rate {pct:.4f}% — shorts paying (contrarian bullish)"
-            if rate > 0.0003:
-                return -1, f"Funding rate {pct:.4f}% — longs paying  (contrarian bearish)"
-            return 0, f"Funding rate {pct:.4f}% — neutral"
-    except Exception:
-        pass
-    return 0, "Funding rate: unavailable"
-
-
-def get_long_short_ratio(pair: str) -> tuple[int, str]:
-    """
-    OKX long/short account ratio — free, no key.
-    LSR < 0.8 → market is over-shorted → contrarian BULLISH.
-    LSR > 1.5 → market is over-longed  → contrarian BEARISH.
-    """
-    instId = pair[:-4] + "-USDT-SWAP"
-    try:
-        r = requests.get(OKX_LSR,
-                         params={"instId": instId, "period": "1H"},
-                         headers=_HEADERS, timeout=5)
-        if r.status_code == 200 and r.json().get("data"):
-            lsr = float(r.json()["data"][0][1])
-            if lsr < 0.8:
-                return 1,  f"L/S ratio {lsr:.2f} — over-shorted (contrarian bullish)"
-            if lsr > 1.5:
-                return -1, f"L/S ratio {lsr:.2f} — over-longed  (contrarian bearish)"
-            return 0, f"L/S ratio {lsr:.2f} — balanced"
-    except Exception:
-        pass
-    return 0, "L/S ratio: unavailable"
-
-
-# ── signal engine ─────────────────────────────────────────────────────────────
-
-NOTE_MAX_LEN = 500  # hard cap enforced on the note column
-
-def _build_note(direction: str, adx: float, votes: list) -> str:
-    """
-    Plain-English summary of the main reason(s) behind the trade — the
-    strongest votes that agree with the final direction, joined into one
-    sentence. Capped at NOTE_MAX_LEN chars.
-    """
-    sign = 1 if direction == "long" else -1
-    agreeing = sorted(
-        (v for v in votes if v[1] * sign > 0),
-        key=lambda v: abs(v[1]),
-        reverse=True,
-    )
-    reasons = [reason for _name, _vote, reason in agreeing[:3]]
-    trend = f"ADX {adx:.1f} confirms a {'strong' if adx >= 30 else 'clear'} {'up' if direction == 'long' else 'down'}trend"
-    note = "; ".join([trend] + reasons) + "."
-    if len(note) > NOTE_MAX_LEN:
-        note = note[:NOTE_MAX_LEN - 1].rsplit(" ", 1)[0] + "…"
-    return note
-
-
-def analyze_pair(pair: str, candles: list,
-                 fear_greed_score: int, fear_greed_reason: str,
-                 macro_score: int = 0, macro_reason: str = "",
-                 market_cap_score: int = 0, market_cap_reason: str = "",
-                 funding_score: int = 0, funding_reason: str = "",
-                 lsr_score: int = 0, lsr_reason: str = "") -> dict | None:
-    """
-    Regime-filtered momentum — see the module docstring for the full strategy.
-    Returns an analysis dict; has_signal=True only when a trade is generated.
-    """
+def _pair_trend_direction(candles: list) -> int:
+    """Lightweight, engine-agnostic per-pair trend read: ADX(14) confirms a
+    real trend exists, EMA50/EMA200 stack gives its direction. Returns
+    +1 (bull) / -1 (bear) / 0 (no confirmed trend), used ONLY to feed the
+    dashboard's bullish/bearish % breadth chart (_upsert_sentiment) — this
+    never generates a trade signal, unlike the retired analyze_pair()."""
     if len(candles) < 210:
-        return {"score": 0, "price": 0.0, "atr": 0.0, "votes": [],
-                "has_signal": False, "reason": "insufficient history"}
+        return 0
+    close = np.array([float(c[4]) for c in candles])
+    high  = np.array([float(c[2]) for c in candles])
+    low   = np.array([float(c[3]) for c in candles])
 
-    close  = np.array([float(c[4]) for c in candles])
-    high   = np.array([float(c[2]) for c in candles])
-    low    = np.array([float(c[3]) for c in candles])
-    vol    = np.array([float(c[5]) for c in candles])
+    if calc_adx(high, low, close) < 20:
+        return 0
     price  = close[-1]
-
-    score        = 0
-    votes        = []   # (indicator, vote, reason_str)
-    is_commodity = pair in ("XAUUSDT", "XAGUSDT")
-    atr_val      = round(calc_atr(high, low, close), 6)
-
-    # Use the real-time ticker price as entry — more accurate than the candle close
-    # which can lag by up to 1h. Falls back to close[-1] if ticker fetch fails.
-    live = get_live_price(pair)
-    entry_price = live if live is not None else price
-    if live is not None and abs(live - price) / price > 0.001:
-        print(f"  [LIVE] {pair} live=${live:,.4f}  candle_close=${price:,.4f}  "
-              f"(diff {(live-price)/price*100:+.2f}%)")
-
-    def no_signal(reason: str) -> dict:
-        return {"score": score, "price": entry_price, "atr": atr_val, "adx": round(adx, 1),
-                "votes": votes + [("Regime", 0, reason)], "has_signal": False}
-
-    # ── REGIME GATE — momentum only trades confirmed trends (ADX + EMA stack) ──
-    # This is the core fix: instead of summing trend-following and mean-reversion
-    # votes that fight each other, we first decide the regime, then only trade
-    # WITH a confirmed trend. Ranging markets are skipped entirely.
-    adx    = calc_adx(high, low, close)
-    ema20  = calc_ema(close, 20)
     ema50  = calc_ema(close, 50)
     ema200 = calc_ema(close, 200)
-    uptrend   = price > ema50 > ema200
-    downtrend = price < ema50 < ema200
-
-    if adx < ADX_TREND_MIN:
-        return no_signal(f"ADX {adx:.1f} < {ADX_TREND_MIN} — ranging, momentum sits out")
-    if not (uptrend or downtrend):
-        return no_signal(f"ADX {adx:.1f} trending but EMAs not stacked — no clean direction")
-
-    votes.append(("Regime", 0, f"ADX {adx:.1f} — {'UP' if uptrend else 'DOWN'}trend confirmed"))
-
-    # ── Trend backbone (the momentum engine) ──────────────────────────────────
-    if price > ema200:
-        score += 1; votes.append(("EMA200", +1, f"price > EMA200 {ema200:,.4f} (macro trend up)"))
-    else:
-        score -= 1; votes.append(("EMA200", -1, f"price < EMA200 {ema200:,.4f} (macro trend down)"))
-
-    if price > ema50:
-        score += 1; votes.append(("EMA50", +1, f"price > EMA50 {ema50:,.4f}"))
-    else:
-        score -= 1; votes.append(("EMA50", -1, f"price < EMA50 {ema50:,.4f}"))
-
-    if ema20 > ema50:
-        score += 1; votes.append(("EMA20/50", +1, "EMA20 > EMA50 (short-term up)"))
-    else:
-        score -= 1; votes.append(("EMA20/50", -1, "EMA20 < EMA50 (short-term down)"))
-
-    # ── MACD — single vote (crossover strengthens the reason, never double-counts) ──
-    _, _, hist_now, hist_prev = calc_macd(close)
-    crossed_up   = hist_prev < 0 < hist_now
-    crossed_down = hist_prev > 0 > hist_now
-    if hist_now > 0:
-        score += 1
-        votes.append(("MACD", +1, f"histogram {hist_now:+.4f} ({'bullish + fresh cross' if crossed_up else 'bullish momentum'})"))
-    elif hist_now < 0:
-        score -= 1
-        votes.append(("MACD", -1, f"histogram {hist_now:+.4f} ({'bearish + fresh cross' if crossed_down else 'bearish momentum'})"))
-
-    # ── OBV slope — volume confirms the trend ─────────────────────────────────
-    obv_slope = calc_obv_slope(close, vol)
-    if obv_slope > 0:
-        score += 1; votes.append(("OBV", +1, "volume trending up (confirms)"))
-    elif obv_slope < 0:
-        score -= 1; votes.append(("OBV", -1, "volume trending down (confirms)"))
-    else:
-        votes.append(("OBV", 0, "OBV flat"))
-
-    # ── Oscillators — REGIME-AWARE, only ever vote WITH the trend ─────────────
-    # An oversold reading inside an uptrend = healthy pullback = bonus long entry.
-    # An overbought reading inside an uptrend is NORMAL momentum → neutral (we do
-    # NOT short a strong uptrend). This is the fix for "buying tops via contradiction".
-    rsi_val = calc_rsi(close)
-    srsi    = calc_stoch_rsi(close)
-    wr_val  = calc_williams_r(high, low, close)
-    osc_oversold   = sum([rsi_val < 40, srsi < 0.25, wr_val < -75]) >= 2
-    osc_overbought = sum([rsi_val > 60, srsi > 0.75, wr_val > -25]) >= 2
-    osc_det = f"RSI {rsi_val:.0f} StochRSI {srsi:.2f} W%R {wr_val:.0f}"
-    if uptrend and osc_oversold:
-        score += 1; votes.append(("Oscillators", +1, f"oversold pullback in uptrend — {osc_det}"))
-    elif downtrend and osc_overbought:
-        score -= 1; votes.append(("Oscillators", -1, f"overbought bounce in downtrend — {osc_det}"))
-    else:
-        votes.append(("Oscillators", 0, f"no pullback edge — {osc_det}"))
-
-    # ── Bollinger — REGIME-AWARE pullback confirmation ────────────────────────
-    _, _, _, pct_b = calc_bollinger(close)
-    if uptrend and pct_b < 0.40:
-        score += 1; votes.append(("Bollinger", +1, f"%B {pct_b:.2f} — dip within uptrend"))
-    elif downtrend and pct_b > 0.60:
-        score -= 1; votes.append(("Bollinger", -1, f"%B {pct_b:.2f} — bounce within downtrend"))
-    else:
-        votes.append(("Bollinger", 0, f"%B {pct_b:.2f} — no pullback"))
-
-    # ── Derivatives (contrarian positioning) ──────────────────────────────────
-    if funding_score != 0:
-        score += funding_score; votes.append(("Funding", funding_score, funding_reason))
-    else:
-        votes.append(("Funding", 0, funding_reason or "Funding: neutral"))
-    if lsr_score != 0:
-        score += lsr_score; votes.append(("L/S Ratio", lsr_score, lsr_reason))
-    else:
-        votes.append(("L/S Ratio", 0, lsr_reason or "L/S: balanced"))
-
-    # ── Market Context — ALL soft sentiment collapsed into ONE low-weight vote ─
-    # F&G, market cap, news and macro are individually noisy. We require strong
-    # net agreement (|sum| >= 2) before they nudge the score by a single point,
-    # so a Google-News keyword can never flip a technical setup on its own.
-    coin_sym = pair.replace("USDT", "")
-    news_score, news_reason = get_news_sentiment(coin_sym)
-    ctx_sum = macro_score + news_score
-    if not is_commodity:
-        ctx_sum += fear_greed_score + market_cap_score
-    if ctx_sum >= 2:
-        score += 1; votes.append(("Market Context", +1, f"net sentiment +{ctx_sum} (F&G/news/macro agree bullish)"))
-    elif ctx_sum <= -2:
-        score -= 1; votes.append(("Market Context", -1, f"net sentiment {ctx_sum} (F&G/news/macro agree bearish)"))
-    else:
-        votes.append(("Market Context", 0, f"net sentiment {ctx_sum:+d} — mixed/neutral"))
-
-    # ── Volume spike — amplifies the FINAL net direction ──────────────────────
-    vol_r = volume_ratio(vol)
-    if vol_r >= 1.5 and score != 0:
-        amp = 1 if score > 0 else -1
-        score += amp
-        votes.append(("Volume", amp, f"volume {vol_r:.2f}× avg — amplifies {'bullish' if amp > 0 else 'bearish'}"))
-    else:
-        votes.append(("Volume", 0, f"volume {vol_r:.2f}× avg"))
-
-    # ── Decision ─────────────────────────────────────────────────────────────
-    base_result = {"score": score, "price": entry_price, "atr": atr_val,
-                   "adx": round(adx, 1), "votes": votes, "has_signal": False}
-
-    if score >= MIN_BULL_SCORE and uptrend:
-        direction = "long"
-    elif score <= -MIN_BEAR_SCORE and downtrend:
-        direction = "short"
-    else:
-        return base_result   # score too weak, or would be counter-trend
-
-    # ── Swing S/R limit entry — ask for a fill at a real reaction level ───────
-    # Prefer the nearest recent swing low (longs) / swing high (shorts) within
-    # MAX_DIST_ATR of price — a level the market has already reacted to, not
-    # an arbitrary offset. Falls back to the shallow 0.3x ATR offset if no
-    # qualifying swing level is nearby, so a signal is never skipped outright.
-    # Everything downstream (SL/TP, RR) anchors to this adjusted entry.
-    market_price = entry_price
-    swing_level = find_swing_level(direction, market_price, atr_val, high, low)
-    if swing_level is not None:
-        entry_price = round(swing_level, 6)
-    elif direction == "long":
-        entry_price = round(market_price - ENTRY_ATR_MULT * atr_val, 6)
-    else:
-        entry_price = round(market_price + ENTRY_ATR_MULT * atr_val, 6)
-
-    # ── Signal strength: net agreement across ALL voters → 60–95 ─────────────
-    # Indicator-AGREEMENT strength (how cleanly the votes align), 60–95.
-    # NOT a win probability — backtests show it doesn't predict win rate.
-    # Used for internal ranking (Pass 2 picks the highest) and expiry sizing;
-    # the user-facing app no longer displays it as a confidence %.
-    #
-    # The denominator is every vote that COULD have fired, not just the ones
-    # that did. Dividing by non-zero votes only (the previous behaviour) made
-    # the metric degenerate: a +4 score with 4 active voters scored a perfect
-    # 95, beating a far broader +9-with-10-voters setup at 91, because the
-    # ratio saturates the moment every active voter happens to agree. That
-    # inverted the ranking — thin, low-conviction signals with many abstentions
-    # were consistently picked over strongly-confirmed ones, and they also
-    # sailed past MIN_SIGNAL_STRENGTH. Counting abstentions in the denominator
-    # makes an abstaining indicator dilute conviction instead of concentrating
-    # it, so breadth of agreement is what actually scores well.
-    total_voters = len([v for v in votes if v[0] != "Regime"]) or 1
-    strength = max(60, min(95, int(60 + min(abs(score) / total_voters, 1.0) * 35)))
-
-    # ── SL / TP — sized off the LIVE entry price ─────────────────────────────
-    # SL is volatility-scaled (2× ATR, capped at MAX_SL_PCT); TP is a fixed
-    # R-multiple of that SL distance, so reward:risk is constant (1 : TP_R_MULT)
-    # across every pair regardless of its ATR. No RR-floor deformation needed —
-    # RR is fixed by construction.
-    sl_dist = min(ATR_SL_MULT * atr_val, entry_price * MAX_SL_PCT)
-    if sl_dist <= 0:
-        sl_dist = entry_price * 0.01
-    tp_dist = TP_R_MULT * sl_dist
-
-    if direction == "long":
-        sl = round(entry_price - sl_dist, 6)
-        tp = round(entry_price + tp_dist, 6)
-    else:
-        sl = round(entry_price + sl_dist, 6)
-        tp = round(entry_price - tp_dist, 6)
-
-    # Risk : Reward ratio
-    risk     = abs(entry_price - sl)
-    reward   = abs(tp - entry_price)
-    rr_ratio = round(reward / risk, 2) if risk > 0 else 0.0
-
-    # Expiry window: 2–7 days based on signal strength + RR quality
-    expiry_days = calc_expiry_days(strength, rr_ratio)
-    now         = datetime.now(timezone.utc)
-    expires_at  = (now + timedelta(days=expiry_days)).isoformat()
-
-    # Compact votes dict — only non-zero votes, no reason strings (~120 bytes).
-    votes_json = {n: v for n, v, _ in votes if v != 0}
-
-    note = _build_note(direction, adx, votes)
-
-    return {
-        "signal": {
-            "id":          str(uuid.uuid4()),
-            "pair":        pair,
-            "direction":   direction,
-            "entry":       round(float(entry_price), 6),
-            "stop_loss":   sl,
-            "take_profit": tp,
-            "confidence":  strength,     # DB column name kept for compat; value = indicator-agreement strength, NOT a win probability (app no longer shows it)
-            "rr_ratio":    rr_ratio,
-            "timestamp":   now.isoformat(),
-            "expires_at":  expires_at,
-            "result":      "pending",
-            "close_price": None,
-            "entry_confirmed": False,   # limit order not yet filled — check_signals confirms this
-            "votes_json":  votes_json,
-            "note":        note,
-        },
-        "score":       score,
-        "price":       entry_price,
-        "atr":         round(atr_val, 6),
-        "adx":         round(adx, 1),
-        "rr_ratio":    rr_ratio,
-        "expiry_days": expiry_days,
-        "votes":       votes,
-        "has_signal":  True,
-    }
-
-
-# ── logging ───────────────────────────────────────────────────────────────────
-
-def log_analysis(pair: str, analysis: dict) -> None:
-    print(SEP)
-    score = analysis["score"]
-
-    if not analysis.get("has_signal"):
-        threshold = f">= +{MIN_BULL_SCORE} or <= -{MIN_BEAR_SCORE}"
-        print(f"  {pair:<12}  score={score:+d}  -> NO SIGNAL  (threshold {threshold})")
-        # Still show the indicator breakdown so you can see why
-        for name, vote, reason in analysis.get("votes", []):
-            arrow = " [+]" if vote > 0 else (" [-]" if vote < 0 else " [ ]")
-            print(f"  {arrow}  {name:<12}  {reason}")
-        return
-
-    s       = analysis["signal"]
-    rr      = analysis.get("rr_ratio", 0)
-    exp_d   = analysis.get("expiry_days", "?")
-    adx     = analysis.get("adx", 0)
-    rr_label = "Excellent" if rr >= 2.0 else "Good" if rr >= 1.5 else "Fair"
-    print(f"  {pair:<12}  score={score:+d}  -> {s['direction'].upper()}  strength={s['confidence']}%  (ADX {adx})")
-    print(f"  Entry   : ${s['entry']:>14,.6f}     ATR      = {analysis['atr']:,.6f}")
-    print(f"  SL      : ${s['stop_loss']:>14,.6f}     RR Ratio = 1 : {rr:.2f}  ({rr_label})")
-    print(f"  TP      : ${s['take_profit']:>14,.6f}     Expires  = {exp_d} day(s)  [{s['expires_at'][:10]}]")
-    print()
-    for name, vote, reason in analysis["votes"]:
-        arrow = " [+]" if vote > 0 else (" [-]" if vote < 0 else " [ ]")
-        print(f"  {arrow}  {name:<12}  {reason}")
+    if price > ema50 > ema200:
+        return 1
+    if price < ema50 < ema200:
+        return -1
+    return 0
 
 
 # ── push notifications ───────────────────────────────────────────────────────
@@ -1238,17 +545,17 @@ def handler(event=None, context=None):
     today_by_engine = {
         DONCHIAN_TAG: sum(1 for r in today_rows
                           if (r.get("strategy") or LEGACY_TAG) == DONCHIAN_TAG),
-        LEGACY_TAG:   sum(1 for r in today_rows
-                          if (r.get("strategy") or LEGACY_TAG) == LEGACY_TAG),
+        MEAN_REVERSION_TAG: sum(1 for r in today_rows
+                          if (r.get("strategy") or LEGACY_TAG) == MEAN_REVERSION_TAG),
     }
     donchian_slots = max(0, MAX_SIGNALS_PER_ENGINE - today_by_engine[DONCHIAN_TAG])
-    legacy_slots   = max(0, MAX_SIGNALS_PER_ENGINE - today_by_engine[LEGACY_TAG])
+    mr_slots       = max(0, MAX_SIGNALS_PER_ENGINE - today_by_engine[MEAN_REVERSION_TAG])
     today_count    = len(today_rows)
-    slots_left     = donchian_slots + legacy_slots
+    slots_left     = donchian_slots + mr_slots
 
     print(f"[generate_signals] Signals today: {today_count} / {MAX_SIGNALS}  "
           f"(donchian {today_by_engine[DONCHIAN_TAG]}/{MAX_SIGNALS_PER_ENGINE}, "
-          f"legacy {today_by_engine[LEGACY_TAG]}/{MAX_SIGNALS_PER_ENGINE})")
+          f"mean_reversion {today_by_engine[MEAN_REVERSION_TAG]}/{MAX_SIGNALS_PER_ENGINE})")
 
     if slots_left == 0:
         print(f"[generate_signals] Both engines at their daily cap of "
@@ -1256,39 +563,34 @@ def handler(event=None, context=None):
         return {"statusCode": 200, "body": json.dumps({"skipped": True, "today_count": today_count})}
 
     print(f"[generate_signals] Room for {donchian_slots} donchian + "
-          f"{legacy_slots} legacy signal(s) this run.\n")
+          f"{mr_slots} mean_reversion signal(s) this run.\n")
 
     # ── Global indicators (fetched once, applied to all pairs) ───────────────
+    # F&G is kept only for the dashboard's sentiment tally (_upsert_sentiment)
+    # — neither remaining engine uses it as a trading input.
     fg_score, fg_raw, fg_reason = get_fear_greed()
     fg_label = fg_reason.split(" — ")[0] if " — " in fg_reason else fg_reason
-    print(f"  Fear & Greed  : {fg_reason}")
-
-    mc_score, mc_reason = get_market_cap_change()
-    print(f"  Market cap    : {mc_reason}")
-
-    macro_score, macro_reason = get_macro_sentiment()
-    print(f"  Macro events  : {macro_reason}\n")
+    print(f"  Fear & Greed  : {fg_reason}\n")
 
     stats = {
         "analysed": 0, "inserted": 0,
-        "low_confidence": 0, "no_signal": 0,
+        "no_signal": 0,
         "skipped_existing": 0, "errors": [],
         "today_count": today_count,
         "slots_left": slots_left,
     }
 
     # ── Pass 1: analyse all pairs, collect valid candidates ───────────────────
-    candidates   = []   # analyses that passed score + confidence thresholds
-    all_analyses = []   # every analysis (for sentiment computation)
-    donchian_candidates = []   # breakout signals from the new engine
+    breadth = []   # {"pair": ..., "score": +1/-1/0} for the sentiment tally only
+    donchian_candidates = []   # breakout signals from the trend-following engine
+    mr_candidates       = []   # range-fade signals from the mean-reversion engine
 
     for pair in TOP_PAIRS:
         try:
             # A pending position blocks only the ENGINE that opened it, not
-            # the pair. Skipping the whole pair meant a legacy position made
-            # Donchian blind to that symbol entirely — with 4 of 10 pairs
-            # typically held, the new engine could never be evaluated on them
-            # and the two could not be compared fairly.
+            # the pair. Skipping the whole pair meant a position from one
+            # engine made the other blind to that symbol entirely, so the
+            # two could not be compared fairly.
             existing = (
                 supabase.table("trade_signals")
                 .select("id, timestamp, strategy")
@@ -1298,19 +600,32 @@ def handler(event=None, context=None):
             ).data or []
             held_by = {r.get("strategy") or LEGACY_TAG for r in existing}
 
-            # ── NEW engine: Donchian channel breakout on 4h bars ─────────
-            # Runs on its own candles and its own arithmetic. Evaluated
-            # first, but ranking (Pass 2) is what actually prioritises it.
-            if DONCHIAN_TAG in held_by:
-                print(f"  [SKIP] {pair:<12} — donchian position already open")
-            else:
+            # Donchian + mean-reversion both run on the SAME 4h candles,
+            # fetched once and shared between them.
+            d4 = None
+            if DONCHIAN_TAG not in held_by or MEAN_REVERSION_TAG not in held_by:
                 try:
                     d4 = fetch_candles(pair, interval="4h")
                     if is_stale_feed(d4):
                         print(f"  [STALE] {pair:<12} — price frozen, feed likely "
-                              f"delisted/halted; skipping both engines")
+                              f"delisted/halted; skipping all engines")
                         stats["stale_feed"] = stats.get("stale_feed", 0) + 1
-                        continue
+                        d4 = None
+                except Exception as exc:
+                    print(f"  [4H FETCH ERR] {pair}: {exc}")
+                    d4 = None
+
+            if d4 is None:
+                stats["no_signal"] += 1
+                continue
+
+            stats["analysed"] += 1
+            breadth.append({"pair": pair, "score": _pair_trend_direction(d4)})
+
+            if DONCHIAN_TAG in held_by:
+                print(f"  [SKIP] {pair:<12} — donchian position already open")
+            else:
+                try:
                     dsig = analyze_donchian(pair, d4, get_live_price(pair))
                     if dsig:
                         donchian_candidates.append(dsig)
@@ -1320,43 +635,18 @@ def handler(event=None, context=None):
                 except Exception as exc:
                     print(f"  [DONCHIAN ERR] {pair}: {exc}")
 
-            if LEGACY_TAG in held_by:
-                ts = existing[0].get("timestamp", "")[:10]
-                print(f"  [SKIP] {pair:<12} — legacy signal already exists ({ts})")
+            if MEAN_REVERSION_TAG in held_by:
+                print(f"  [SKIP] {pair:<12} — mean_reversion position already open")
                 stats["skipped_existing"] += 1
-                continue
-
-            candles = fetch_candles(pair)
-
-            # Per-pair derivatives data (OKX free, no key)
-            fr_score, fr_reason = get_funding_rate(pair)
-            ls_score, ls_reason = get_long_short_ratio(pair)
-
-            stats["analysed"] += 1
-            analysis = analyze_pair(
-                pair, candles,
-                fg_score, fg_reason,
-                macro_score, macro_reason,
-                mc_score, mc_reason,
-                fr_score, fr_reason,
-                ls_score, ls_reason,
-            )
-            analysis["pair"] = pair
-            all_analyses.append(analysis)
-
-            log_analysis(pair, analysis)
-
-            if not analysis.get("has_signal"):
-                stats["no_signal"] += 1
-                continue
-
-            strength = analysis["signal"]["confidence"]
-            if strength < MIN_SIGNAL_STRENGTH:
-                print(f"\n  [LOW STR]  {pair}  strength {strength}% < {MIN_SIGNAL_STRENGTH}% — discarded")
-                stats["low_confidence"] += 1
-                continue
-
-            candidates.append(analysis)
+            else:
+                try:
+                    mrsig = analyze_mean_reversion(pair, d4, get_live_price(pair))
+                    if mrsig:
+                        mr_candidates.append(mrsig)
+                        print(f"  [MEAN-REV] {pair:<12} {mrsig['direction'].upper():<5} "
+                              f"entry={mrsig['entry']:,.4f} rr=1:{mrsig['rr_ratio']:.2f}")
+                except Exception as exc:
+                    print(f"  [MEAN-REV ERR] {pair}: {exc}")
 
         except requests.HTTPError as exc:
             msg = f"{pair}: API HTTP {exc.response.status_code} (all providers failed)"
@@ -1368,39 +658,38 @@ def handler(event=None, context=None):
             stats["errors"].append(msg)
 
     # ── Pass 2: rank within each engine's own budget ─────────────────────────
-    # The engines no longer compete for slots — each has MAX_SIGNALS_PER_ENGINE
-    # of its own, so neither engine's sample size depends on how active the
+    # The engines don't compete for slots — each has MAX_SIGNALS_PER_ENGINE of
+    # its own, so neither engine's sample size depends on how active the
     # other happens to be. Both are tagged in the `strategy` column so live
     # results can settle which one actually earns its place.
     donchian_candidates.sort(key=lambda s: -s["_rank"])
-    candidates.sort(key=lambda a: a["signal"]["confidence"], reverse=True)
+    mr_candidates.sort(key=lambda s: -s["_rank"])
 
     new_take = donchian_candidates[:donchian_slots]
 
     # Never open two positions on the same pair from different engines: if
-    # Donchian is taking a pair this run, legacy stands down on it. Donchian
-    # wins the tie because it is the measurably better strategy (PF 1.27 vs
-    # 1.09 over 20 months of 4h bars, after fees — see donchian.py).
+    # Donchian is taking a pair this run, mean_reversion stands down on it.
+    # Donchian wins the tie because it is the measurably better strategy by
+    # backtested PF (1.27 vs mean_reversion's 1.11 — see donchian.py /
+    # mean_reversion.py).
     donchian_pairs = {s["pair"] for s in new_take}
-    legacy = [a for a in candidates
-              if a["signal"]["pair"] not in donchian_pairs]
+    mr_eligible = [s for s in mr_candidates if s["pair"] not in donchian_pairs]
+    mr_take = mr_eligible[:mr_slots]
 
-    legacy_take = legacy[:legacy_slots]
     to_insert = [{"signal": s, "engine": DONCHIAN_TAG} for s in new_take] \
-        + [{**a, "engine": LEGACY_TAG} for a in legacy_take]
-    overflow = legacy[legacy_slots:]
+        + [{"signal": s, "engine": MEAN_REVERSION_TAG} for s in mr_take]
+    overflow = mr_eligible[mr_slots:]
 
     print(f"\n  Engine mix: {len(new_take)}/{donchian_slots} donchian + "
-          f"{len(legacy_take)}/{legacy_slots} legacy  "
-          f"[{len(donchian_candidates)} / {len(candidates)} qualified]")
+          f"{len(mr_take)}/{mr_slots} mean_reversion  "
+          f"[{len(donchian_candidates)} / {len(mr_candidates)} qualified]")
 
     if overflow:
         print(f"\n{SEP}")
-        print(f"  Dropped (legacy engine at its cap of {MAX_SIGNALS_PER_ENGINE}/day "
-              f"— {today_by_engine[LEGACY_TAG]} already today):")
-        for a in overflow:
-            s = a["signal"]
-            print(f"    {s['pair']:<12}  {s['direction'].upper():<5}  strength={s['confidence']}%  — not inserted")
+        print(f"  Dropped (mean_reversion engine at its cap of {MAX_SIGNALS_PER_ENGINE}/day "
+              f"— {today_by_engine[MEAN_REVERSION_TAG]} already today):")
+        for s in overflow:
+            print(f"    {s['pair']:<12}  {s['direction'].upper():<5}  rr=1:{s['rr_ratio']:.2f}  — not inserted")
 
     # ── Pass 3: insert the winners ────────────────────────────────────────────
     if to_insert:
@@ -1409,7 +698,7 @@ def handler(event=None, context=None):
 
     for analysis in to_insert:
         sig = dict(analysis["signal"])          # copy: we mutate before insert
-        engine = analysis.get("engine", LEGACY_TAG)
+        engine = analysis.get("engine", DONCHIAN_TAG)
         sig["strategy"] = engine
         sig.pop("_rank", None)                  # ranking helper, not a column
         try:
@@ -1432,7 +721,7 @@ def handler(event=None, context=None):
 
     # ── Pass 5: upsert market sentiment ──────────────────────────────────────
     try:
-        _upsert_sentiment(supabase, all_analyses, fg_raw, fg_label)
+        _upsert_sentiment(supabase, breadth, fg_raw, fg_label)
     except Exception as exc:
         print(f"\n  [SENTIMENT ERR] {exc}")
 
@@ -1440,10 +729,9 @@ def handler(event=None, context=None):
     print(f"[generate_signals] Done")
     print(f"  Inserted         : {stats['inserted']}  "
           f"(donchian {stats.get('inserted_' + DONCHIAN_TAG, 0)}, "
-          f"legacy {stats.get('inserted_' + LEGACY_TAG, 0)}; "
+          f"mean_reversion {stats.get('inserted_' + MEAN_REVERSION_TAG, 0)}; "
           f"cap {MAX_SIGNALS_PER_ENGINE}/engine, today total="
           f"{today_count + stats['inserted']})")
-    print(f"  Low strength     : {stats['low_confidence']}  (below {MIN_SIGNAL_STRENGTH}%)")
     print(f"  No signal        : {stats['no_signal']}")
     print(f"  Already pending  : {stats['skipped_existing']}")
     print(f"  Errors           : {len(stats['errors'])}")
