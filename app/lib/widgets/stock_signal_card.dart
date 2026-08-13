@@ -122,6 +122,18 @@ class StockSignalCard extends StatelessWidget {
                 ),
               ],
             ),
+            // Only while open — once closed, exitPrice (folded into the
+            // move% above) is the number that matters, and latestPrice
+            // stops updating anyway (check_stock_signals only refreshes it
+            // for still-open positions).
+            if (signal.isPending && signal.latestPrice != null) ...[
+              const SizedBox(height: 8),
+              _Tile(
+                label: 'LATEST (prior close)',
+                value: '\$${signal.latestPrice!.toStringAsFixed(2)}',
+                valueColor: move != null && move >= 0 ? c.long : c.short,
+              ),
+            ],
             const SizedBox(height: 10),
 
             Row(
