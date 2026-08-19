@@ -12,34 +12,34 @@ import { supabase, isConfigured } from '@/lib/supabase'
 
 export interface MonthlyRow {
   month: string           // 'YYYY-MM-01'
-  market: 'crypto' | 'nifty' | 'stocks'
+  market: 'crypto' | 'crypto_options' | 'stocks'
   trades: number
   wins: number
   losses: number
   expired: number
   win_rate: number | null
   pnl: number
-  pnl_unit: 'pct' | 'rs'
+  pnl_unit: 'pct' | 'usd'
   best: number | null
   worst: number | null
 }
 
 const MARKETS = {
-  crypto: { label: 'Crypto', color: '#f59e0b' },
-  nifty:  { label: 'NIFTY',  color: '#818cf8' },
-  stocks: { label: 'Stocks', color: '#22c55e' },
+  crypto:         { label: 'Crypto',  color: '#f59e0b' },
+  crypto_options: { label: 'Options', color: '#818cf8' },
+  stocks:         { label: 'Stocks',  color: '#22c55e' },
 } as const
 
 const monthLabel = (m: string) =>
   new Date(m + 'T00:00:00Z').toLocaleDateString('en-US',
     { month: 'short', year: 'numeric', timeZone: 'UTC' })
 
-/** P&L is percent for crypto/stocks and rupees for NIFTY — never mix them. */
-const fmtPnl = (v: number, unit: 'pct' | 'rs') => {
+/** P&L is percent for crypto/stocks and USD for crypto options — never mix them. */
+const fmtPnl = (v: number, unit: 'pct' | 'usd') => {
   const sign = v >= 0 ? '+' : '−'
   const n = Math.abs(v)
-  return unit === 'rs'
-    ? `${sign}₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+  return unit === 'usd'
+    ? `${sign}$${n.toLocaleString('en-US', { maximumFractionDigits: 0 })}`
     : `${sign}${n.toFixed(1)}%`
 }
 
@@ -158,8 +158,8 @@ const MonthlyTrackRecord = memo(function MonthlyTrackRecord() {
 
       <p className="text-[11px] text-[#8b949e] pt-1">
         P&amp;L is the sum of per-trade returns (% for crypto and stocks,
-        rupees for NIFTY) — not a compounded account return. Kept permanently;
-        raw signals are deleted after 90 days.
+        USD for crypto options) — not a compounded account return. Kept
+        permanently; raw signals are deleted after 90 days.
       </p>
     </div>
   )
