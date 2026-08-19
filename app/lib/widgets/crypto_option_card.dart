@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
-import '../models/nifty_option_signal.dart';
+import '../models/crypto_option_signal.dart';
 import '../theme/app_colors.dart';
 
-/// Compact card for a NIFTY option signal. Mirrors [SignalCard] styling but
-/// shows option-specific info: BUY CE/PE, strike, rupee stop, premium.
-class NiftyOptionCard extends StatelessWidget {
-  final NiftyOptionSignal signal;
+/// Compact card for a BTC/ETH option signal. Mirrors [SignalCard] styling but
+/// shows option-specific info: BUY CALL/PUT, strike, USD stop, size.
+class CryptoOptionCard extends StatelessWidget {
+  final CryptoOptionSignal signal;
   final VoidCallback? onTap;
 
-  const NiftyOptionCard({super.key, required this.signal, this.onTap});
+  const CryptoOptionCard({super.key, required this.signal, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -71,7 +71,7 @@ class NiftyOptionCard extends StatelessWidget {
             ),
             const SizedBox(height: 4),
 
-            // What CE/PE actually means, so the side is never ambiguous.
+            // What CALL/PUT actually means, so the side is never ambiguous.
             Text(
               signal.sideExplainer,
               style: TextStyle(color: c.t3, fontSize: 11),
@@ -100,9 +100,8 @@ class NiftyOptionCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    signal.hasPremium
-                        ? 'Premium ${signal.premiumLabel} · outlay ${signal.outlayLabel}'
-                        : 'Premium: check your broker for the live quote',
+                    'Max loss \$${signal.maxLossUsd.toStringAsFixed(0)} · '
+                    'check Deribit for the live premium',
                     style: TextStyle(color: c.t3, fontSize: 11),
                   ),
                 ],
@@ -110,32 +109,32 @@ class NiftyOptionCard extends StatelessWidget {
             ),
             const SizedBox(height: 10),
 
-            // Index levels that drive the trade: entry, stop, target.
+            // Underlying price levels that drive the trade: entry, stop, target.
             Row(
               children: [
                 _Tile(
                   label: 'ENTRY',
-                  value: signal.indexEntry.toStringAsFixed(0),
+                  value: signal.entry.toStringAsFixed(0),
                   valueColor: c.t1,
                 ),
                 const SizedBox(width: 8),
                 _Tile(
                   label: 'STOP',
-                  value: signal.indexStop.toStringAsFixed(0),
+                  value: signal.stopPrice.toStringAsFixed(0),
                   valueColor: c.short,
                 ),
                 const SizedBox(width: 8),
                 _Tile(
                   label: 'TARGET',
-                  value: signal.indexTarget?.toStringAsFixed(0) ?? '—',
+                  value: signal.targetPrice?.toStringAsFixed(0) ?? '—',
                   valueColor: c.long,
                 ),
               ],
             ),
             const SizedBox(height: 8),
             Text(
-              'Max loss ₹${signal.maxLossRs.toStringAsFixed(0)} · '
-              'index levels, not premium',
+              'Max loss \$${signal.maxLossUsd.toStringAsFixed(0)} · '
+              'underlying levels, not premium',
               style: TextStyle(color: c.t3, fontSize: 10),
             ),
             const SizedBox(height: 10),
@@ -162,11 +161,11 @@ class NiftyOptionCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (signal.pnlRs != null)
+                if (signal.pnlUsd != null)
                   Text(
-                    '${signal.pnlRs! >= 0 ? '+' : ''}₹${signal.pnlRs!.toStringAsFixed(0)}',
+                    '${signal.pnlUsd! >= 0 ? '+' : ''}\$${signal.pnlUsd!.toStringAsFixed(0)}',
                     style: TextStyle(
-                      color: signal.pnlRs! >= 0 ? c.long : c.short,
+                      color: signal.pnlUsd! >= 0 ? c.long : c.short,
                       fontSize: 13,
                       fontWeight: FontWeight.w800,
                     ),

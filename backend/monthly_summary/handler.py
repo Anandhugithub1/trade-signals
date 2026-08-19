@@ -46,12 +46,12 @@ SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 RECOMPUTE_MONTHS = 4
 
 # Each market: table, the column holding realised P&L, and its unit.
-#   crypto — no stored P&L column, so it is derived from entry vs close_price
-#   nifty  — pnl_rs is already rupees
-#   stocks — pnl_pct is already a percentage
+#   crypto         — no stored P&L column, so it is derived from entry vs close_price
+#   crypto_options — pnl_usd is already USD
+#   stocks         — pnl_pct is already a percentage
 MARKETS = {
     "crypto": {"table": "trade_signals", "unit": "pct"},
-    "nifty": {"table": "nifty_option_signals", "unit": "rs"},
+    "crypto_options": {"table": "crypto_option_signals", "unit": "usd"},
     "stocks": {"table": "stock_signals", "unit": "pct"},
 }
 
@@ -72,8 +72,8 @@ def _month_key(d: datetime) -> str:
 
 def trade_pnl(market: str, row: dict) -> float | None:
     """Realised P&L for one closed trade, in that market's natural unit."""
-    if market == "nifty":
-        v = row.get("pnl_rs")
+    if market == "crypto_options":
+        v = row.get("pnl_usd")
         return float(v) if v is not None else None
 
     if market == "stocks":

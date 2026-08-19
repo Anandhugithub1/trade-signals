@@ -12,7 +12,7 @@ import 'screens/auth/register_screen.dart';
 import 'screens/disclaimer_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/signals_screen.dart';
-import 'screens/nifty_options_screen.dart';
+import 'screens/crypto_options_screen.dart';
 import 'screens/stocks_screen.dart';
 import 'screens/profile_screen.dart';
 
@@ -73,7 +73,7 @@ class _MainShellState extends State<MainShell> {
   static const _screens = [
     HomeScreen(),
     SignalsScreen(),
-    NiftyOptionsScreen(),
+    CryptoOptionsScreen(),
     StocksScreen(),
     ProfileScreen(),
   ];

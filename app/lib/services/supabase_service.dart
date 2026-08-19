@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/signal.dart';
 import '../models/market_sentiment.dart';
-import '../models/nifty_option_signal.dart';
+import '../models/crypto_option_signal.dart';
 import '../models/stock_signal.dart';
 import '../utils/app_error.dart';
 
@@ -33,7 +33,7 @@ class SupabaseService {
         // Undefined column: the app is newer than the database. Name the fix
         // explicitly — this used to surface as a raw Postgres string.
         '42703' => 'Database is missing a column the app expects — apply the '
-            'latest schema SQL (nifty_option_signals.sql).',
+            'latest schema SQL for this table.',
         '23505' => 'Duplicate entry — this record already exists.',
         '42501' => 'Permission denied — check Row Level Security policies.',
         _       => e.message,
@@ -79,19 +79,19 @@ class SupabaseService {
             .toList();
       });
 
-  /// NIFTY 50 option signals from the last 90 days, newest first.
-  static Future<List<NiftyOptionSignal>> fetchNiftyOptionSignals() =>
+  /// BTC/ETH option signals from the last 90 days, newest first.
+  static Future<List<CryptoOptionSignal>> fetchCryptoOptionSignals() =>
       _guard(() async {
         final cutoff = DateTime.now()
             .subtract(const Duration(days: 90))
             .toIso8601String();
         final data = await _db
-            .from('nifty_option_signals')
+            .from('crypto_option_signals')
             .select()
             .gte('timestamp', cutoff)
             .order('timestamp', ascending: false);
         return data
-            .map<NiftyOptionSignal>((e) => NiftyOptionSignal.fromJson(e))
+            .map<CryptoOptionSignal>((e) => CryptoOptionSignal.fromJson(e))
             .toList();
       });
 

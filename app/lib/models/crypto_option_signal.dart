@@ -1,51 +1,52 @@
-// Model for a NIFTY 50 option signal produced by the options algo
-// (`nifty option trading/src`). Backed by the `nifty_option_signals`
-// Supabase table. Kept deliberately parallel to TradeSignal so the UI
-// patterns match, but with option-specific fields (strike / side / premium).
+// Model for a BTC/ETH option signal produced by the crypto options algo
+// (`crypto option trading/src`). Backed by the `crypto_option_signals`
+// Supabase table. Replaces NiftyOptionSignal — kept deliberately parallel to
+// TradeSignal so the UI patterns match, but with option-specific fields
+// (side / strike / size / USD stop).
 
-enum OptionSide { ce, pe } // CE = bullish (buy call), PE = bearish (buy put)
+enum OptionSide { call, put } // call = bullish, put = bearish
 
 enum OptionResult { pending, win, loss, expired }
 
-class NiftyOptionSignal {
+class CryptoOptionSignal {
   final String id;
+  final String symbol; // 'BTCUSDT' | 'ETHUSDT'
   final OptionSide side;
-  final int? strike;
-  final String strikeStyle; // ITM | ATM | OTM
-  final double? premium;
+  final double? strike;
 
-  /// Weekly contract expiry (the Tuesday the option settles) — distinct from
-  /// [expiresAt], which is when this intraday signal is squared off.
+  /// Nearest Deribit expiry for the ATM contract quoted at signal time.
   final DateTime? optionExpiry;
 
-  /// Broker-ready label written by the backend, e.g. "NIFTY 24400 CE 12 Aug".
+  /// Broker/exchange-ready label written by the backend, e.g. 'BTC-29AUG26-70000-C'.
   final String? instrument;
 
-  final int lots;
+  /// Underlying units sized to the USD stop budget, e.g. 0.05 BTC.
+  final double size;
 
-  // Index (NIFTY spot) levels the signal is based on
+  // Underlying (perp) price levels the signal is based on
   final double spot;
-  final double indexEntry;
-  final double indexStop;
-  final double? indexTarget; // null for reversal-exit signals
+  final double entry;
+  final double stopPrice;
+  final double? targetPrice;
 
-  final double maxLossRs; // rupee stop budget per trade
+  final double maxLossUsd; // USD stop budget per trade
   final double? rsi;
   final double? atr;
 
   final OptionResult result;
-  final double? pnlRs;
+  final double? pnlUsd;
   final bool entryConfirmed;
 
-  /// Why the trade closed: TARGET | STOP | REVERSAL | EOD. Null while open.
+  /// Why the trade closed: TARGET | STOP | TRAIL | TIMEOUT. Null while open.
   final String? exitReason;
-  final double? exitIndex;
-  final double? latestIndex;
+  final double? exitPrice;
+  final double? latestPrice;
 
   /// When the trade was created (signal fired).
   final DateTime timestamp;
 
-  /// When the trade will be / was squared off.
+  /// When the trade will be / was force-closed (24/7 market — no session
+  /// close, so this is entry time + max hold, not an exchange close time).
   final DateTime? expiresAt;
 
   /// When entry actually filled — null while the limit is still unfilled.
@@ -56,28 +57,27 @@ class NiftyOptionSignal {
 
   final String? note;
 
-  const NiftyOptionSignal({
+  const CryptoOptionSignal({
     required this.id,
+    required this.symbol,
     required this.side,
     this.strike,
-    this.strikeStyle = 'ATM',
-    this.premium,
     this.optionExpiry,
     this.instrument,
-    this.lots = 1,
+    this.size = 0,
     required this.spot,
-    required this.indexEntry,
-    required this.indexStop,
-    this.indexTarget,
-    required this.maxLossRs,
+    required this.entry,
+    required this.stopPrice,
+    this.targetPrice,
+    required this.maxLossUsd,
     this.rsi,
     this.atr,
     this.result = OptionResult.pending,
-    this.pnlRs,
+    this.pnlUsd,
     this.entryConfirmed = false,
     this.exitReason,
-    this.exitIndex,
-    this.latestIndex,
+    this.exitPrice,
+    this.latestPrice,
     required this.timestamp,
     this.expiresAt,
     this.entryAt,
@@ -85,35 +85,30 @@ class NiftyOptionSignal {
     this.note,
   });
 
-  factory NiftyOptionSignal.fromJson(Map<String, dynamic> j) {
-    return NiftyOptionSignal(
+  factory CryptoOptionSignal.fromJson(Map<String, dynamic> j) {
+    return CryptoOptionSignal(
       id: j['id'] as String,
-      side: (j['side'] as String).toUpperCase() == 'PE'
-          ? OptionSide.pe
-          : OptionSide.ce,
-      strike: _num(j['strike'])?.toInt(),
-      strikeStyle: (j['strike_style'] as String?) ?? 'ATM',
-      premium: _num(j['premium']),
+      symbol: (j['symbol'] as String?) ?? 'BTCUSDT',
+      side: (j['side'] as String).toUpperCase() == 'PUT'
+          ? OptionSide.put
+          : OptionSide.call,
+      strike: _num(j['strike']),
       optionExpiry: _parseTime(j['option_expiry']),
       instrument: j['instrument'] as String?,
-      lots: _num(j['lots'])?.toInt() ?? 1,
+      size: _num(j['size']) ?? 0,
       spot: _num(j['spot']) ?? 0,
-      indexEntry: _num(j['index_entry']) ?? 0,
-      indexStop: _num(j['index_stop']) ?? 0,
-      indexTarget: _num(j['index_target']),
-      maxLossRs: _num(j['max_loss_rs']) ?? 0,
+      entry: _num(j['entry']) ?? 0,
+      stopPrice: _num(j['stop_price']) ?? 0,
+      targetPrice: _num(j['target_price']),
+      maxLossUsd: _num(j['max_loss_usd']) ?? 0,
       rsi: _num(j['rsi']),
       atr: _num(j['atr']),
       result: _resultFromString(j['result'] as String? ?? 'pending'),
-      pnlRs: j['pnl_rs'] != null ? (j['pnl_rs'] as num).toDouble() : null,
+      pnlUsd: j['pnl_usd'] != null ? (j['pnl_usd'] as num).toDouble() : null,
       entryConfirmed: j['entry_confirmed'] as bool? ?? false,
-      // These columns ship with the exit-tracking migration. Reading them
-      // defensively means an app build that predates the migration (or a DB
-      // that hasn't had it applied yet) still renders the feed instead of
-      // throwing and surfacing as a bogus "No Connection".
       exitReason: j['exit_reason'] as String?,
-      exitIndex: _num(j['exit_index']),
-      latestIndex: _num(j['latest_index']),
+      exitPrice: _num(j['exit_price']),
+      latestPrice: _num(j['latest_price']),
       timestamp: _parseTime(j['timestamp']) ?? DateTime.now(),
       expiresAt: _parseTime(j['expires_at']),
       entryAt: _parseTime(j['entry_at']),
@@ -130,9 +125,8 @@ class NiftyOptionSignal {
     return double.tryParse(v.toString());
   }
 
-  /// Supabase returns timestamptz; the backend writes IST-offset strings.
-  /// Parse to local time so "created 10:15 AM" reads correctly on-device
-  /// instead of showing a raw UTC instant.
+  /// Supabase returns timestamptz (UTC); parse to local time so "created
+  /// 10:15 AM" reads correctly on-device instead of showing a raw UTC instant.
   static DateTime? _parseTime(dynamic v) {
     if (v == null) return null;
     return DateTime.tryParse(v.toString())?.toLocal();
@@ -152,62 +146,40 @@ class NiftyOptionSignal {
   }
 
   // ---- Display helpers ----
-  bool get isBullish => side == OptionSide.ce;
+  bool get isBullish => side == OptionSide.call;
   bool get isPending => result == OptionResult.pending;
   bool get isWin => result == OptionResult.win;
   bool get isLoss => result == OptionResult.loss;
 
-  String get sideLabel => side == OptionSide.ce ? 'BUY CE' : 'BUY PE';
+  String get sideLabel => side == OptionSide.call ? 'BUY CALL' : 'BUY PUT';
   String get directionLabel => isBullish ? 'Bullish' : 'Bearish';
 
-  /// The exact contract to buy, e.g. "NIFTY 24400 CE 12 Aug".
-  /// Prefers the backend's broker-ready label; falls back to composing one.
+  String get assetLabel => symbol.replaceAll('USDT', '');
+
+  /// The exact contract to buy, e.g. "BTC-29AUG26-70000-C".
+  /// Prefers the backend's exchange-ready label; falls back to composing one.
   String get instrumentLabel {
     if (instrument != null && instrument!.isNotEmpty) return instrument!;
-    final t = side == OptionSide.ce ? 'CE' : 'PE';
-    if (strike == null) return 'NIFTY $t ($strikeStyle)';
-    final exp = optionExpiry == null
-        ? ''
-        : ' ${optionExpiry!.day} ${_months[optionExpiry!.month - 1]}';
-    return 'NIFTY $strike $t$exp';
+    final t = side == OptionSide.call ? 'CALL' : 'PUT';
+    if (strike == null) return '$assetLabel $t (ATM)';
+    return '$assetLabel ${strike!.toStringAsFixed(0)} $t';
   }
 
-  /// One-line plain-English instruction, e.g.
-  /// "Buy 1 lot (75) of NIFTY 24400 CE 12 Aug — bullish on NIFTY".
-  String get actionLabel {
-    final qty = lots == 1 ? '1 lot' : '$lots lots';
-    final units = lotSize * lots;
-    return 'Buy $qty ($units) of $instrumentLabel';
-  }
+  /// One-line plain-English instruction.
+  String get actionLabel =>
+      'Buy ${size.toStringAsFixed(4)} $assetLabel of $instrumentLabel';
 
-  /// Why this side — spells out CE-vs-PE rather than assuming it's known.
-  String get sideExplainer => side == OptionSide.ce
-      ? 'CE (Call) — profits if NIFTY rises'
-      : 'PE (Put) — profits if NIFTY falls';
-
-  /// Premium is only known when NSE's chain was reachable at signal time.
-  bool get hasPremium => premium != null;
-
-  String get premiumLabel => premium == null
-      ? 'Check broker'
-      : '₹${premium!.toStringAsFixed(1)}';
-
-  /// Total rupees to pay for the position, when premium is known.
-  String get outlayLabel => premiumOutlay == null
-      ? '—'
-      : '₹${premiumOutlay!.toStringAsFixed(0)}';
-
-  /// Approximate premium outlay to buy the position (per unit x 75 x lots).
-  static const int lotSize = 75;
-  double? get premiumOutlay =>
-      premium == null ? null : premium! * lotSize * lots;
+  /// Why this side — spells out CALL-vs-PUT rather than assuming it's known.
+  String get sideExplainer => side == OptionSide.call
+      ? 'CALL — profits if $assetLabel rises'
+      : 'PUT — profits if $assetLabel falls';
 
   bool get hasExpiry => expiresAt != null;
 
   String get expiryLabel {
     if (expiresAt == null) return '';
     final left = expiresAt!.difference(DateTime.now());
-    if (left.isNegative) return 'Squared off';
+    if (left.isNegative) return 'Closed';
     if (left.inMinutes < 60) return 'Exits in ${left.inMinutes}m';
     if (left.inHours < 24) return 'Exits in ${left.inHours}h';
     return 'Exits ${_dayLabel(expiresAt!)}';
@@ -218,7 +190,7 @@ class NiftyOptionSignal {
   /// "1 Aug, 10:15 AM" — when the trade was created.
   String get createdLabel => _fmtDateTime(timestamp);
 
-  /// When the trade closed, or the scheduled square-off while still open.
+  /// When the trade closed, or the scheduled timeout while still open.
   String get closedLabel {
     if (closedAt != null) return _fmtDateTime(closedAt!);
     if (expiresAt != null) return _fmtDateTime(expiresAt!);
@@ -248,10 +220,10 @@ class NiftyOptionSignal {
         return 'Target hit';
       case 'STOP':
         return 'Stop-loss hit';
-      case 'REVERSAL':
-        return 'Trend reversed';
-      case 'EOD':
-        return 'Squared off at close';
+      case 'TRAIL':
+        return 'Trailing stop hit';
+      case 'TIMEOUT':
+        return 'Closed at timeout';
       default:
         return isPending ? 'Open' : result.name.toUpperCase();
     }
@@ -282,33 +254,33 @@ class NiftyOptionSignal {
   }
 }
 
-// Stats over a list of option signals (win rate + rupee P&L).
+// Stats over a list of option signals (win rate + USD P&L).
 class OptionStats {
   final int total;
   final int wins;
   final int losses;
   final int pending;
-  final double netPnlRs;
+  final double netPnlUsd;
 
   const OptionStats({
     required this.total,
     required this.wins,
     required this.losses,
     required this.pending,
-    required this.netPnlRs,
+    required this.netPnlUsd,
   });
 
-  factory OptionStats.from(List<NiftyOptionSignal> signals) {
+  factory OptionStats.from(List<CryptoOptionSignal> signals) {
     final closed = signals.where((s) => !s.isPending).toList();
     final w = closed.where((s) => s.isWin).length;
     final l = closed.where((s) => s.isLoss).length;
-    final net = signals.fold<double>(0, (sum, s) => sum + (s.pnlRs ?? 0));
+    final net = signals.fold<double>(0, (sum, s) => sum + (s.pnlUsd ?? 0));
     return OptionStats(
       total: signals.length,
       wins: w,
       losses: l,
       pending: signals.where((s) => s.isPending).length,
-      netPnlRs: net,
+      netPnlUsd: net,
     );
   }
 

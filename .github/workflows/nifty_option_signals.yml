@@ -1,5 +1,13 @@
-name: NIFTY Option Signals
+name: NIFTY Option Signals (disabled — replaced by Crypto Option Signals)
 
+# DISABLED 2026-08-19: superseded by .github/workflows/crypto_option_signals.yml
+# and the "crypto option trading" module. The app's Options tab now reads
+# crypto_option_signals instead of nifty_option_signals. The NIFTY code and
+# this workflow are kept on disk (not deleted) in case NIFTY signals are
+# wanted again later, but the schedule trigger is removed so it no longer
+# runs or writes to the live table. Use workflow_dispatch to run it manually
+# if ever needed.
+#
 # NIFTY market hours are 09:15-15:30 IST.
 # GitHub cron runs in UTC, and IST = UTC+5:30, so:
 #   09:15 IST = 03:45 UTC   ...   15:30 IST = 10:00 UTC
@@ -15,18 +23,7 @@ name: NIFTY Option Signals
 #                         slot stays. Generation no-ops there by design; the
 #                         square-off is the whole point of that run.
 on:
-  schedule:
-    # 03:45-03:59 UTC (covers the 09:15 IST open)
-    - cron: '45,59 3 * * 1-5'
-    # 04:00-09:59 UTC every 15 min (09:30-15:29 IST)
-    - cron: '0,15,30,45 4-9 * * 1-5'
-    # 10:00 UTC (15:30 IST close) — square-off run; generation self-skips.
-    - cron: '0 10 * * 1-5'
-    # 10:15 UTC (15:45 IST) — safety net: if the 10:00 run was delayed or
-    # dropped, open trades still get squared off the same day rather than
-    # hanging until the next morning.
-    - cron: '15 10 * * 1-5'
-  workflow_dispatch:            # manual "Run workflow" button
+  workflow_dispatch:            # manual "Run workflow" button only — schedule removed
     inputs:
       max_loss:
         description: 'Max loss per trade (Rs)'

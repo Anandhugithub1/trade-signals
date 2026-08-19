@@ -1,25 +1,26 @@
 import 'package:flutter/material.dart';
-import '../models/nifty_option_signal.dart';
+import '../models/crypto_option_signal.dart';
 import '../services/supabase_service.dart';
 import '../theme/app_colors.dart';
-import '../widgets/nifty_option_card.dart';
+import '../widgets/crypto_option_card.dart';
 import '../widgets/error_view.dart';
 import '../widgets/disclaimer_banner.dart';
 import '../widgets/shimmer.dart';
 
-/// "NIFTY Options Trading" section — intraday CE/PE signals from the options
-/// algo. Read-only feed from the `nifty_option_signals` Supabase table.
-class NiftyOptionsScreen extends StatefulWidget {
-  const NiftyOptionsScreen({super.key});
+/// "Crypto Options Trading" section — BTC/ETH CALL/PUT signals from the
+/// options algo. Read-only feed from the `crypto_option_signals` Supabase
+/// table. Replaces the old NIFTY Options tab.
+class CryptoOptionsScreen extends StatefulWidget {
+  const CryptoOptionsScreen({super.key});
 
   @override
-  State<NiftyOptionsScreen> createState() => _NiftyOptionsScreenState();
+  State<CryptoOptionsScreen> createState() => _CryptoOptionsScreenState();
 }
 
-class _NiftyOptionsScreenState extends State<NiftyOptionsScreen> {
+class _CryptoOptionsScreenState extends State<CryptoOptionsScreen> {
   String _sideFilter = 'All';
   String _resFilter = 'All';
-  List<NiftyOptionSignal> _signals = [];
+  List<CryptoOptionSignal> _signals = [];
   bool _loading = true;
   String? _error;
 
@@ -35,7 +36,7 @@ class _NiftyOptionsScreenState extends State<NiftyOptionsScreen> {
       _error = null;
     });
     try {
-      final data = await SupabaseService.fetchNiftyOptionSignals();
+      final data = await SupabaseService.fetchCryptoOptionSignals();
       if (mounted) {
         setState(() {
           _signals = data;
@@ -52,11 +53,11 @@ class _NiftyOptionsScreenState extends State<NiftyOptionsScreen> {
     }
   }
 
-  List<NiftyOptionSignal> get _filtered {
+  List<CryptoOptionSignal> get _filtered {
     return _signals.where((s) {
       final matchSide = _sideFilter == 'All' ||
-          (_sideFilter == 'CE' && s.side == OptionSide.ce) ||
-          (_sideFilter == 'PE' && s.side == OptionSide.pe);
+          (_sideFilter == 'CALL' && s.side == OptionSide.call) ||
+          (_sideFilter == 'PUT' && s.side == OptionSide.put);
       final matchRes = _resFilter == 'All' ||
           (_resFilter == 'Active' && s.isPending) ||
           (_resFilter == 'Won' && s.isWin) ||
@@ -110,13 +111,13 @@ class _NiftyOptionsScreenState extends State<NiftyOptionsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('NIFTY Options',
+            Text('Crypto Options',
                 style: TextStyle(
                     color: c.t1,
                     fontSize: 26,
                     fontWeight: FontWeight.w800,
                     letterSpacing: -0.5)),
-            Text('Intraday CE / PE signals',
+            Text('BTC / ETH CALL / PUT signals',
                 style: TextStyle(color: c.t2, fontSize: 12)),
           ],
         ),
@@ -127,7 +128,7 @@ class _NiftyOptionsScreenState extends State<NiftyOptionsScreen> {
             borderRadius: BorderRadius.circular(7),
             border: Border.all(color: c.accent.withValues(alpha: 0.35)),
           ),
-          child: Text('NSE',
+          child: Text('24/7',
               style: TextStyle(
                   color: c.accent,
                   fontSize: 11,
@@ -138,9 +139,9 @@ class _NiftyOptionsScreenState extends State<NiftyOptionsScreen> {
     );
   }
 
-  // Net rupee P&L hero card (the metric that matters for options).
+  // Net USD P&L hero card (the metric that matters for options).
   Widget _buildPnlCard(AppColors c, OptionStats stats) {
-    final positive = stats.netPnlRs >= 0;
+    final positive = stats.netPnlUsd >= 0;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(16),
@@ -156,7 +157,7 @@ class _NiftyOptionsScreenState extends State<NiftyOptionsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('NET P&L (90d, per lot)',
+                Text('NET P&L (90d)',
                     style: TextStyle(
                         color: c.t3,
                         fontSize: 11,
@@ -164,7 +165,7 @@ class _NiftyOptionsScreenState extends State<NiftyOptionsScreen> {
                         fontWeight: FontWeight.w600)),
                 const SizedBox(height: 6),
                 Text(
-                  '${positive ? '+' : ''}₹${stats.netPnlRs.toStringAsFixed(0)}',
+                  '${positive ? '+' : ''}\$${stats.netPnlUsd.toStringAsFixed(0)}',
                   style: TextStyle(
                     color: positive ? c.long : c.short,
                     fontSize: 28,
@@ -198,16 +199,16 @@ class _NiftyOptionsScreenState extends State<NiftyOptionsScreen> {
             onTap: () => setState(() => _sideFilter = 'All')),
         const SizedBox(width: 7),
         _Pill(
-            label: 'CE (Bullish)',
-            active: _sideFilter == 'CE',
+            label: 'CALL (Bullish)',
+            active: _sideFilter == 'CALL',
             color: c.long,
-            onTap: () => setState(() => _sideFilter = 'CE')),
+            onTap: () => setState(() => _sideFilter = 'CALL')),
         const SizedBox(width: 7),
         _Pill(
-            label: 'PE (Bearish)',
-            active: _sideFilter == 'PE',
+            label: 'PUT (Bearish)',
+            active: _sideFilter == 'PUT',
             color: c.short,
-            onTap: () => setState(() => _sideFilter = 'PE')),
+            onTap: () => setState(() => _sideFilter = 'PUT')),
       ],
     );
   }
@@ -268,7 +269,7 @@ class _NiftyOptionsScreenState extends State<NiftyOptionsScreen> {
             : Icons.search_off_rounded,
         title: _signals.isEmpty ? 'No option signals yet' : 'No matches',
         subtitle: _signals.isEmpty
-            ? 'CE/PE signals appear here during market hours (9:15–15:30 IST).'
+            ? 'BTC/ETH CALL/PUT signals appear here as the trend-strength setup fires — checked hourly, 24/7.'
             : 'Try adjusting your filters.',
       );
     }
@@ -281,7 +282,7 @@ class _NiftyOptionsScreenState extends State<NiftyOptionsScreen> {
         physics: const AlwaysScrollableScrollPhysics(
             parent: BouncingScrollPhysics()),
         itemCount: _filtered.length,
-        itemBuilder: (_, i) => NiftyOptionCard(signal: _filtered[i]),
+        itemBuilder: (_, i) => CryptoOptionCard(signal: _filtered[i]),
       ),
     );
   }

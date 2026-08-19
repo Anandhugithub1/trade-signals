@@ -12,7 +12,7 @@
 
 CREATE TABLE IF NOT EXISTS public.monthly_summary (
     month        date    NOT NULL,          -- first day of the month (UTC)
-    market       text    NOT NULL,          -- 'crypto' | 'nifty' | 'stocks'
+    market       text    NOT NULL,          -- 'crypto' | 'crypto_options' | 'stocks'
 
     trades       integer NOT NULL DEFAULT 0,  -- closed trades only
     wins         integer NOT NULL DEFAULT 0,
@@ -21,10 +21,10 @@ CREATE TABLE IF NOT EXISTS public.monthly_summary (
     win_rate     numeric,                     -- wins / (wins+losses), 0-100
 
     -- One P&L number, in that market's natural unit:
-    --   crypto/stocks -> sum of per-trade % returns
-    --   nifty         -> sum of rupee P&L
+    --   crypto/stocks  -> sum of per-trade % returns
+    --   crypto_options -> sum of USD P&L
     pnl          numeric,
-    pnl_unit     text,                        -- 'pct' | 'rs'
+    pnl_unit     text,                        -- 'pct' | 'usd'
 
     best         numeric,                     -- best single trade
     worst        numeric,                     -- worst single trade

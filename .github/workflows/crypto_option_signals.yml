@@ -1,0 +1,59 @@
+name: Crypto Option Signals
+
+# Crypto trades 24/7 — unlike the old NIFTY workflow this has no market-hours
+# window. The strategy runs on 1h bars (see "crypto option trading"), so
+# generation runs hourly; check_signals also runs hourly to resolve
+# stop/target/timeout on open positions.
+on:
+  schedule:
+    - cron: '5 * * * *'    # :05 past every hour — offset so it doesn't clash
+                            # with other crons at :00
+  workflow_dispatch:
+    inputs:
+      max_loss:
+        description: 'Max loss per trade (USD)'
+        required: false
+        default: '200'
+
+jobs:
+  signal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'crypto option trading/requirements.txt'
+
+      - name: Install dependencies
+        run: |
+          pip install -r "crypto option trading/requirements.txt"
+          pip install supabase python-dotenv
+
+      - name: Generate signals (BTC + ETH)
+        env:
+          MAX_LOSS: ${{ github.event.inputs.max_loss || '200' }}
+          SYMBOLS: 'BTCUSDT,ETHUSDT'
+          INTERVAL: '1h'
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        working-directory: 'crypto option trading'
+        run: python src/run_signal.py
+
+      # Close out open positions: mark win/loss/expired, record pnl_usd and
+      # closed_at. Without this every signal stays 'pending' forever and the
+      # app's win-rate / P&L cards read as empty. Runs even if generation
+      # failed, since open trades still need to be resolved.
+      - name: Check open signals
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        working-directory: 'crypto option trading'
+        run: python src/check_signals.py
