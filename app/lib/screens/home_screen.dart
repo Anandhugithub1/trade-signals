@@ -271,6 +271,8 @@ class _HeroPerformanceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final winPct = stats.winRate;
+    final totalR = stats.totalR;
+    final positive = totalR >= 0;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(22, 20, 22, 20),
@@ -326,14 +328,19 @@ class _HeroPerformanceCard extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // Big win rate
+          // Big profit figure (realized R) — the metric that actually says
+          // whether the strategy makes money. Win rate alone is misleading
+          // for an asymmetric R:R engine: a 35-40% win rate can still be
+          // strongly profitable if winners are sized several R larger than
+          // losers, so it's demoted to a small secondary chip below instead
+          // of driving a "Weak/Moderate/Strong" verdict on its own.
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                '${(winPct * 100).toStringAsFixed(0)}%',
-                style: const TextStyle(
-                  color: Colors.white,
+                '${positive ? '+' : ''}${totalR.toStringAsFixed(1)}R',
+                style: TextStyle(
+                  color: positive ? const Color(0xFF86EFAC) : const Color(0xFFFCA5A5),
                   fontSize: 52,
                   fontWeight: FontWeight.w900,
                   letterSpacing: -2,
@@ -348,7 +355,7 @@ class _HeroPerformanceCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Win Rate',
+                      'Profit (R)',
                       style: TextStyle(
                         color: Colors.white.withValues(alpha: 0.7),
                         fontSize: 14,
@@ -359,13 +366,13 @@ class _HeroPerformanceCard extends StatelessWidget {
                     Row(
                       children: [
                         Icon(
-                          winPct >= 0.6 ? Icons.trending_up_rounded : Icons.trending_down_rounded,
+                          positive ? Icons.trending_up_rounded : Icons.trending_down_rounded,
                           color: Colors.white.withValues(alpha: 0.6),
                           size: 14,
                         ),
                         const SizedBox(width: 3),
                         Text(
-                          winPct >= 0.6 ? 'Strong' : winPct >= 0.45 ? 'Moderate' : 'Weak',
+                          '${(winPct * 100).toStringAsFixed(0)}% win rate',
                           style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.55),
                             fontSize: 12,
@@ -694,6 +701,7 @@ class _EngineStatBlock extends StatelessWidget {
             ? '∞'
             : pf.toStringAsFixed(2);
     final wrLabel = stats.closed == 0 ? '—' : '${(stats.winRate * 100).toStringAsFixed(0)}%';
+    final positive = stats.totalR >= 0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -713,14 +721,23 @@ class _EngineStatBlock extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 8),
+        // Headline: realized profit (R) — this is what actually says whether
+        // the engine makes money. Win rate alone is misleading for
+        // asymmetric R:R strategies (e.g. a 35-40% win rate can still be
+        // strongly profitable), so it's demoted to the smaller line below.
         Row(
           children: [
             Text(
-              wrLabel,
-              style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.w900, letterSpacing: -0.5),
+              '${positive ? '+' : ''}${stats.totalR.toStringAsFixed(1)}R',
+              style: TextStyle(
+                color: stats.closed == 0 ? c.t3 : (positive ? c.long : c.short),
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -0.5,
+              ),
             ),
             const SizedBox(width: 5),
-            Text('win rate', style: TextStyle(color: c.t3, fontSize: 11)),
+            Text('total', style: TextStyle(color: c.t3, fontSize: 11)),
           ],
         ),
         const SizedBox(height: 4),
@@ -729,7 +746,7 @@ class _EngineStatBlock extends StatelessWidget {
           style: TextStyle(color: c.t2, fontSize: 11),
         ),
         Text(
-          '${stats.totalR >= 0 ? '+' : ''}${stats.totalR.toStringAsFixed(1)}R total',
+          '$wrLabel win rate',
           style: TextStyle(color: c.t3, fontSize: 11),
         ),
       ],
