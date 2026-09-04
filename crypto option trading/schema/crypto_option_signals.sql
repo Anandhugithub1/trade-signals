@@ -18,6 +18,11 @@ CREATE TABLE IF NOT EXISTS public.crypto_option_signals (
     option_expiry     date,                            -- nearest Deribit expiry
     instrument        text,                            -- ready-to-trade label, e.g. 'BTC-29AUG26-70000-C'
     size              numeric     DEFAULT 0,           -- underlying units (e.g. 0.05 BTC) sized to max_loss_usd
+    -- Deribit quotes BTC/ETH options in units of the UNDERLYING, not USD.
+    -- These are already converted to USD (see live_signal.py).
+    premium_usd       numeric,                         -- premium per 1 contract, USD
+    premium_cost_usd  numeric,                         -- premium_usd * size = total outlay
+    mark_iv           numeric,                         -- Deribit mark IV % at signal time
 
     -- Underlying (perp) price levels the signal is based on
     spot              numeric     NOT NULL,           -- underlying price at signal time

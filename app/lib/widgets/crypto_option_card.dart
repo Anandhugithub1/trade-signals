@@ -100,13 +100,56 @@ class CryptoOptionCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 3),
                   Text(
-                    'Max loss \$${signal.maxLossUsd.toStringAsFixed(0)} · '
-                    'check Deribit for the live premium',
+                    signal.hasPremium
+                        ? 'Premium ${signal.premiumLabel}/contract  ·  '
+                            'you pay ${signal.premiumCostLabel}'
+                        : 'Premium: check Deribit for the live quote',
                     style: TextStyle(color: c.t3, fontSize: 11),
                   ),
+                  if (signal.optionExpiry != null) ...[
+                    const SizedBox(height: 3),
+                    Text(
+                      'Contract expires ${signal.optionExpiryLabel}'
+                      '${signal.markIv != null ? '  ·  IV ${signal.markIvLabel}' : ''}',
+                      style: TextStyle(color: c.t3, fontSize: 11),
+                    ),
+                  ],
                 ],
               ),
             ),
+
+            // A contract that settles before the trade's own square-off can
+            // expire worthless even if the direction is right — surface it
+            // loudly rather than letting the user discover it on Deribit.
+            if (signal.expiresBeforeTradeCloses) ...[
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: c.short.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: c.short.withValues(alpha: 0.35)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.warning_amber_rounded,
+                        color: c.short, size: 14),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'This contract expires before the trade is due to '
+                        'close — it can expire worthless even if the call is '
+                        'right. Pick a later expiry on Deribit.',
+                        style: TextStyle(color: c.short, fontSize: 10.5),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 10),
 
             // Underlying price levels that drive the trade: entry, stop, target.
@@ -133,8 +176,14 @@ class CryptoOptionCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Max loss \$${signal.maxLossUsd.toStringAsFixed(0)} · '
-              'underlying levels, not premium',
+              signal.premiumCostUsd != null
+                  // Be explicit that these are two different numbers: the
+                  // stop is modelled on the UNDERLYING, but buying an option
+                  // risks the whole premium if it expires worthless.
+                  ? 'Stop-out loss ≈ \$${signal.maxLossUsd.toStringAsFixed(0)}  ·  '
+                      'max at risk ${signal.premiumCostLabel} (full premium)'
+                  : 'Stop-out loss ≈ \$${signal.maxLossUsd.toStringAsFixed(0)} · '
+                      'underlying levels, not premium',
               style: TextStyle(color: c.t3, fontSize: 10),
             ),
             const SizedBox(height: 10),

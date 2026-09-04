@@ -124,6 +124,21 @@ def build_record(symbol: str, max_loss: float, interval: str) -> dict:
         leg = "call_" if is_call else "put_"
         rec["signal"]["strike"] = ctx.get("atm_strike")
         rec["signal"]["instrument"] = ctx.get(leg + "instrument")
+        # Premium per contract in USD, plus the total outlay for our size.
+        # Both are what the user actually pays -- without them the app can
+        # only say "check Deribit", which is not an actionable signal.
+        premium_usd = ctx.get(leg + "premium_usd")
+        rec["signal"]["premium_usd"] = premium_usd
+        if premium_usd is not None:
+            # NOTE: this outlay is typically LARGER than max_loss_usd (often
+            # ~2x). max_loss_usd is the *modeled* loss from the delta
+            # approximation -- i.e. what you lose if you exit at the stop
+            # level as intended. The premium is the true worst case: buying
+            # an option, your capital at risk is the whole premium if it
+            # expires worthless. The app shows both, deliberately, so the
+            # real capital committed is never hidden behind the model.
+            rec["signal"]["premium_cost_usd"] = round(premium_usd * size, 2)
+        rec["signal"]["mark_iv"] = ctx.get(leg + "mark_iv")
         expiry_ms = ctx.get("expiry_ts_ms")
         if expiry_ms:
             rec["signal"]["option_expiry"] = (

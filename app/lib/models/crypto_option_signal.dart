@@ -23,6 +23,21 @@ class CryptoOptionSignal {
   /// Underlying units sized to the USD stop budget, e.g. 0.05 BTC.
   final double size;
 
+  /// Premium for ONE contract, in USD. Deribit quotes options in units of
+  /// the underlying (a BTC put at 0.0117 = 0.0117 BTC); the backend already
+  /// converts to USD before storing, so this is dollars.
+  final double? premiumUsd;
+
+  /// premiumUsd * size — the actual cash outlay to open the position.
+  /// This is the TRUE capital at risk when buying an option, and it is
+  /// normally larger than [maxLossUsd] (often ~2x): maxLossUsd is the
+  /// modelled loss assuming you exit at the stop, whereas a bought option
+  /// can lose its entire premium if it expires worthless.
+  final double? premiumCostUsd;
+
+  /// Deribit mark implied volatility (%) at signal time.
+  final double? markIv;
+
   // Underlying (perp) price levels the signal is based on
   final double spot;
   final double entry;
@@ -65,6 +80,9 @@ class CryptoOptionSignal {
     this.optionExpiry,
     this.instrument,
     this.size = 0,
+    this.premiumUsd,
+    this.premiumCostUsd,
+    this.markIv,
     required this.spot,
     required this.entry,
     required this.stopPrice,
@@ -96,6 +114,11 @@ class CryptoOptionSignal {
       optionExpiry: _parseTime(j['option_expiry']),
       instrument: j['instrument'] as String?,
       size: _num(j['size']) ?? 0,
+      // Read defensively: rows written before the premium migration, and
+      // rows where Deribit was unreachable at signal time, have these null.
+      premiumUsd: _num(j['premium_usd']),
+      premiumCostUsd: _num(j['premium_cost_usd']),
+      markIv: _num(j['mark_iv']),
       spot: _num(j['spot']) ?? 0,
       entry: _num(j['entry']) ?? 0,
       stopPrice: _num(j['stop_price']) ?? 0,
@@ -168,6 +191,56 @@ class CryptoOptionSignal {
   /// One-line plain-English instruction.
   String get actionLabel =>
       'Buy ${size.toStringAsFixed(4)} $assetLabel of $instrumentLabel';
+
+  bool get hasPremium => premiumUsd != null;
+
+  /// Premium per contract, e.g. "$972.34".
+  String get premiumLabel =>
+      premiumUsd == null ? 'Check Deribit' : '\$${_money(premiumUsd!)}';
+
+  /// Total cash outlay to open — the real capital at risk.
+  String get premiumCostLabel =>
+      premiumCostUsd == null ? '—' : '\$${_money(premiumCostUsd!)}';
+
+  String get markIvLabel =>
+      markIv == null ? '—' : '${markIv!.toStringAsFixed(1)}%';
+
+  /// The contract's own expiry date, e.g. "8 Sep".
+  String get optionExpiryLabel => optionExpiry == null
+      ? '—'
+      : '${optionExpiry!.day} ${_months[optionExpiry!.month - 1]}';
+
+  /// True when the named option contract expires BEFORE this signal's own
+  /// square-off time — i.e. the option would expire mid-trade and could go
+  /// worthless regardless of whether the directional call was right.
+  ///
+  /// The backend now picks an expiry that outlives the hold, but signals
+  /// written before that fix (and any future Deribit gap) can still be in
+  /// this state, so the UI flags it rather than showing a contract that
+  /// cannot work.
+  bool get expiresBeforeTradeCloses {
+    if (optionExpiry == null || expiresAt == null) return false;
+    // option_expiry is a date; Deribit settles 08:00 UTC on that day.
+    final settle = DateTime.utc(
+      optionExpiry!.year,
+      optionExpiry!.month,
+      optionExpiry!.day,
+      8,
+    ).toLocal();
+    return settle.isBefore(expiresAt!);
+  }
+
+  static String _money(double v) {
+    final s = v.toStringAsFixed(2);
+    final parts = s.split('.');
+    final digits = parts[0];
+    final buf = StringBuffer();
+    for (var i = 0; i < digits.length; i++) {
+      if (i > 0 && (digits.length - i) % 3 == 0) buf.write(',');
+      buf.write(digits[i]);
+    }
+    return '$buf.${parts[1]}';
+  }
 
   /// Why this side — spells out CALL-vs-PUT rather than assuming it's known.
   String get sideExplainer => side == OptionSide.call

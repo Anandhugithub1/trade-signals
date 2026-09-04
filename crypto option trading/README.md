@@ -150,6 +150,48 @@ window was also too shallow (4 bars) to still find it once discovered late.
 Fixed by widening both `MAX_SIGNAL_AGE_MIN` (360 min) and the scan lookback
 to match. See the comments in `src/run_signal.py` for the full trace.
 
+### Which contract to buy — strike and expiry
+
+The signal is generated on the underlying perp, but what you actually buy is
+a specific Deribit contract. Two rules, both of which had to be fixed after
+going live:
+
+**Strike = ATM** (nearest listed strike to spot). Deliberate on two
+independent grounds:
+1. The backtest prices P&L with `option_delta = 0.5`, which *is* an ATM
+   option. Buying ITM or OTM instead silently breaks the correspondence
+   between the published expectancy above and what you actually trade.
+2. It is where the liquidity is. A live 2026-09-04 BTC chain check showed
+   open interest **25.0 at the ATM strike vs 0.0–1.4 at every neighbour** —
+   a "cheaper" OTM strike often cannot be filled at a sane spread at all.
+
+**Expiry = the first one that outlives the trade** (72h max hold + 12h
+buffer, so ~84h+). *This was a real bug*: the original code took Deribit's
+nearest expiry (`min(expiration_timestamp)`), which is routinely under 24h
+out. The live 2026-08-26 BTCUSDT PUT was written against `BTC-27AUG26` — an
+option expiring ~25h after a signal designed to be held up to 72h. It would
+have expired worthless mid-trade regardless of whether the direction was
+right. The buffer matters too: theta decay accelerates hardest in a
+contract's final day, so expiring "just barely" after the close still bleeds
+premium through the back half of the hold.
+
+The app flags any signal whose contract still settles before the trade's own
+square-off, rather than showing a contract that cannot work.
+
+### Premium is quoted in coin, not dollars — and it is the real max loss
+
+Deribit quotes BTC/ETH options in **units of the underlying**: a BTC put at
+`0.0117` costs 0.0117 BTC (≈$950 at 81k spot), not $0.01. The backend
+converts to USD before storing (`premium_usd`, `premium_cost_usd`).
+
+Note the gap this exposes between the model and reality: sizing solves
+`size = max_loss / (stop_distance × delta)` for a **$200** modelled loss,
+but the premium outlay for that size is typically **~$410** — because when
+you *buy* an option your true worst case is the entire premium, not the
+modelled stop-out. `max_loss_usd` is what you lose if you exit at the stop
+as intended; the premium is what you lose if it expires worthless. The app
+shows both, deliberately.
+
 ### Research basis — why these parameters, not the NIFTY defaults
 
 The NIFTY module's winning shape was "tight rupee stop + wide ATR target,
