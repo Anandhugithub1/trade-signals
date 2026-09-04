@@ -33,7 +33,19 @@ from live_signal import get_deribit_atm_context
 # Don't act on a signal older than this. The scan looks back a few bars for a
 # fresh trigger; without an age cap a delayed CI run could resurrect a
 # trigger from hours earlier and post it as if it were live.
-MAX_SIGNAL_AGE_MIN = 90  # generous vs NIFTY's 30 -- crypto runs every 4h, not 15min
+#
+# 90 min was too tight in practice: GitHub's scheduled cron does not run
+# reliably hourly under load (observed gaps between actual runs: mean ~115
+# min, 31% of gaps > 90 min, worst case ~13 hours). At 90 min, a real
+# qualifying signal that fires on an hourly bar can be discarded as "stale"
+# before the next run even sees it, which silently starves the strategy of
+# trades it should have taken (confirmed live: a BTCUSDT PUT triggered
+# 2026-09-02 19:00 UTC, but the next run at 20:47 found it already 107 min
+# old and dropped it -- no replacement signal fired for the following 9
+# days). 6 hours gives real headroom against GitHub's actual scheduling
+# jitter while still being "same session" for a position meant to be held
+# up to 72h (MAX_HOLD_HOURS below).
+MAX_SIGNAL_AGE_MIN = 360
 
 # How long an unfilled/unresolved signal is allowed to sit before check_signals
 # force-times it out. Matches the backtest's max_hold_bars (72 x 1h = 3 days).
@@ -44,8 +56,16 @@ def build_record(symbol: str, max_loss: float, interval: str) -> dict:
     p = StrategyParams()
     df = add_indicators(get_perp_history(symbol, interval=interval, months=2), p)
 
+    # Scan back far enough to still find a trigger even after the longest
+    # realistic cron gap (see MAX_SIGNAL_AGE_MIN above) -- 4 bars (4h on a 1h
+    # interval) was too shallow: a run delayed past that window would see an
+    # empty scan and report "no signal" even though one had fired and was
+    # still within the staleness budget. The age check below is still what
+    # actually rejects anything too old; this only controls how far back we
+    # look for a candidate in the first place.
+    lookback_bars = max(int(MAX_SIGNAL_AGE_MIN / 60) + 2, 4)
     sig = None
-    for i in range(len(df) - 1, max(len(df) - 4, 0), -1):
+    for i in range(len(df) - 1, max(len(df) - lookback_bars, 0), -1):
         s = evaluate_row(df, i, p)
         if s is not None:
             sig = s

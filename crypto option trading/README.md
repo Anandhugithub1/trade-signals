@@ -131,6 +131,25 @@ Data from Binance/Bybit/OKX futures klines (2024-08-29 → 2026-08-19).
 > exchange fees are modelled. Past performance is not indicative of future
 > results.
 
+### Live operational note — GitHub cron reliability vs. signal staleness
+
+The first two weeks live (2026-08-19 → 09-04) surfaced a real gap between
+the backtest and production: 4 signals fired and all 4 lost (a normal
+outcome for a 52%-win-rate strategy — see above), but then **zero** new
+signals fired for 9 straight days despite the strategy's own indicators
+showing a real, tradeable RSI-50 cross on 2026-09-02.
+
+Root cause: GitHub's scheduled cron does not actually run hourly under
+load — observed gaps between real runs over ~200 runs: mean 115 min,
+31% of gaps > 90 min, worst case ~13 hours. `run_signal.py`'s staleness
+guard (`MAX_SIGNAL_AGE_MIN`, originally 90) was tighter than the cron's
+real-world jitter, so a signal born at the top of an hour could already be
+stale by the time the next (delayed) run checked for it, and got silently
+discarded — with no signal at all in the meantime, since the lookback
+window was also too shallow (4 bars) to still find it once discovered late.
+Fixed by widening both `MAX_SIGNAL_AGE_MIN` (360 min) and the scan lookback
+to match. See the comments in `src/run_signal.py` for the full trace.
+
 ### Research basis — why these parameters, not the NIFTY defaults
 
 The NIFTY module's winning shape was "tight rupee stop + wide ATR target,
