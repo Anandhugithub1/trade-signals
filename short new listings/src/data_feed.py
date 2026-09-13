@@ -3,27 +3,44 @@ Data access layer for the "short new listings" engine.
 
 GEO-BLOCKING, same issue documented in backend/generate_signals/handler.py
 and "crypto option trading/src/data_feed.py": fapi.binance.com returns
-HTTP 451 from GitHub Actions' US-hosted runners. Confirmed live 2026-09-xx
--- this workflow was crashing on every scheduled run until this fix.
+HTTP 451 from GitHub Actions' US-hosted runners. Confirmed live 2026-09-13
+-- this workflow was crashing on every scheduled run until the first fix
+(Bybit fallback for klines/price), and even after that, listing discovery
+still found zero candidates every run because Binance was the only source
+for onboardDate.
+
+SECOND FIX (this revision): www.binance.com/fapi/v1/* mirrors the EXACT
+same Futures API -- exchangeInfo, klines, ticker/price -- as the blocked
+fapi.binance.com host, verified live 2026-09-13 (identical onboardDate for
+DOSUSDT, identical kline OHLCV for BTCUSDT, real current listings
+including same-week ones). It's the same underlying Binance data via a
+different hostname, not a different exchange, so using it changes nothing
+about what the strategy IS -- unlike falling back to Bybit/OKX for
+listing dates, which would (see below). BINANCE_HOSTS tries both;
+`www.binance.com` is the main public website rather than the dedicated
+derivatives-trading API host, so it MAY not carry the same
+jurisdiction-based block -- plausible and evidence-backed, but not
+confirmed from an actually-blocked IP. The real confirmation is the next
+live GitHub Actions run; if it's blocked too, this degrades to exactly
+the previous (Bybit-for-klines, empty-list-for-listings) behavior.
 
 Price data uses the same proven fallback pattern as every other engine
 here -- which provider answers doesn't change what the strategy IS, since
 they all track the same underlying market price:
-  - get_live_price:   Binance -> Bybit -> OKX (3-way; simple ticker lookup)
-  - get_daily_klines:  Binance -> Bybit only (see that function's docstring
-                       for why OKX isn't a third fallback here)
+  - get_live_price:   Binance (both hosts) -> Bybit -> OKX
+  - get_daily_klines:  Binance (both hosts) -> Bybit only (see that
+                       function's docstring for why OKX isn't a further
+                       fallback here)
 
-LISTING-DATE DISCOVERY (get_usdt_perp_listings) is a harder case and is
-NOT silently swapped to another exchange: this strategy's entry trigger is
+LISTING-DATE DISCOVERY (get_usdt_perp_listings) still does NOT fall back
+past Binance to another exchange: this strategy's entry trigger is
 specifically "27-33 days since Binance's own onboardDate", which is the
 number the whole backtest (see README.md) was validated against. No other
 exchange exposes that same value -- OKX's `listTime` is when OKX listed
-the contract, not Binance, and can differ by days. Binance Futures has no
-alternate non-geo-blocked host either (data-api.binance.vision only
-mirrors SPOT paths, confirmed 404 on /fapi/v1/*). So this call is
-Binance-only, degrading to an empty candidate list (safe no-op, matching
-every other engine's convention) rather than crashing the workflow when
-blocked -- see run_signal.py for the operational consequence and options.
+the contract, not Binance, and can differ by days. If BOTH Binance hosts
+are unreachable, this degrades to an empty candidate list (safe no-op,
+matching every other engine's convention) rather than crashing the
+workflow -- see run_signal.py for the operational consequence.
 """
 from __future__ import annotations
 
@@ -39,8 +56,32 @@ _HEADERS = {
         "(KHTML, like Gecko) Chrome/122.0 Safari/537.36"
     ),
 }
-BINANCE_BASE = "https://fapi.binance.com/fapi/v1"
+# Both serve the identical Binance Futures API (verified 2026-09-13 --
+# same symbols, same onboardDate, same OHLCV). Tried in order; the first
+# is the dedicated trading-API host (geo-blocked from GitHub Actions), the
+# second is the main public website (not confirmed blocked or unblocked
+# from GH Actions specifically, but is a real, evidence-backed candidate).
+BINANCE_HOSTS = [
+    "https://fapi.binance.com/fapi/v1",
+    "https://www.binance.com/fapi/v1",
+]
 BYBIT_KLINES = "https://api.bybit.com/v5/market/kline"
+
+
+def _binance_get(path: str, params: dict, timeout: int) -> Optional[dict]:
+    """
+    Try each Binance host in BINANCE_HOSTS in order for the same path.
+    Returns the parsed JSON body from the first host that answers with
+    HTTP 200, or None if every host fails/errors.
+    """
+    for base in BINANCE_HOSTS:
+        try:
+            r = requests.get(f"{base}{path}", headers=_HEADERS, params=params, timeout=timeout)
+            if r.status_code == 200:
+                return r.json()
+        except Exception:
+            continue
+    return None
 
 
 def get_usdt_perp_listings(min_age_days: float = 0, max_age_days: float = 420) -> list[dict]:
@@ -49,19 +90,17 @@ def get_usdt_perp_listings(min_age_days: float = 0, max_age_days: float = 420) -
     age (now - onboardDate) falls in [min_age_days, max_age_days].
 
     Returns [{"symbol", "onboard_ms", "age_days"}, ...]. Excludes anything
-    without a usable onboardDate. Returns [] (does not raise) if Binance's
-    exchangeInfo is unreachable -- e.g. geo-blocked from GitHub Actions --
+    without a usable onboardDate. Returns [] if every Binance host in
+    BINANCE_HOSTS is unreachable -- e.g. geo-blocked from GitHub Actions --
     so a scheduled run finds "no candidates" instead of crashing. This does
     NOT fall back to another exchange; see this module's docstring for why.
     """
-    try:
-        r = requests.get(f"{BINANCE_BASE}/exchangeInfo", headers=_HEADERS, timeout=15)
-        r.raise_for_status()
-        syms = r.json()["symbols"]
-    except Exception as e:  # noqa: BLE001
-        print(f"  [WARN] Binance exchangeInfo unreachable ({e}) -- "
-              f"no listing candidates this run.")
+    body = _binance_get("/exchangeInfo", params={}, timeout=15)
+    if body is None:
+        print("  [WARN] Binance exchangeInfo unreachable on every host -- "
+              "no listing candidates this run.")
         return []
+    syms = body["symbols"]
 
     now_ms = time.time() * 1000
     out = []
@@ -86,12 +125,12 @@ def _okx_symbol(symbol: str) -> str:
 
 def get_daily_klines(symbol: str, start_ms: float, limit: int = 200) -> Optional[list]:
     """
-    Daily klines from start_ms FORWARD, Binance -> Bybit fallback. Returns
-    rows in the shared [ts, open, high, low, close, volume] layout
-    (Binance's native shape); Bybit's response is normalized to match.
-    None if both fail.
+    Daily klines from start_ms FORWARD, Binance (both hosts) -> Bybit
+    fallback. Returns rows in the shared [ts, open, high, low, close,
+    volume] layout (Binance's native shape); Bybit's response is
+    normalized to match. None if all providers fail.
 
-    OKX deliberately is NOT a third fallback here (unlike get_live_price
+    OKX deliberately is NOT a further fallback here (unlike get_live_price
     below): OKX's kline endpoints paginate with a before/after CURSOR, not
     a "start here, walk forward" parameter -- tested directly and neither
     one gives a clean forward window from an arbitrary timestamp the way
@@ -104,19 +143,14 @@ def get_daily_klines(symbol: str, start_ms: float, limit: int = 200) -> Optional
     right (see "crypto option trading"'s get_okx_deep_history for the
     correct walking-cursor pattern) before adding it here.
     """
-    # 1. Binance Futures (primary; blocked from GitHub Actions -- fall through)
-    try:
-        r = requests.get(
-            f"{BINANCE_BASE}/klines", headers=_HEADERS, timeout=15,
-            params={"symbol": symbol, "interval": "1d",
-                    "startTime": int(start_ms), "limit": limit},
-        )
-        if r.status_code == 200:
-            data = r.json()
-            if isinstance(data, list) and data:
-                return data
-    except Exception:
-        pass
+    # 1. Binance Futures, tried on both hosts (see BINANCE_HOSTS above).
+    data = _binance_get(
+        "/klines", params={"symbol": symbol, "interval": "1d",
+                            "startTime": int(start_ms), "limit": limit},
+        timeout=15,
+    )
+    if isinstance(data, list) and data:
+        return data
 
     # 2. Bybit Futures (verified: `start` correctly returns candles FROM
     # that timestamp forward, newest-first in the raw response).
@@ -151,16 +185,10 @@ def klines_to_df(candles: list) -> pd.DataFrame:
 
 
 def get_live_price(symbol: str) -> Optional[float]:
-    """Real-time last-traded price, same Binance -> Bybit -> OKX fallback chain."""
-    try:
-        r = requests.get(
-            f"{BINANCE_BASE}/ticker/price", headers=_HEADERS, timeout=6,
-            params={"symbol": symbol},
-        )
-        if r.status_code == 200:
-            return float(r.json()["price"])
-    except Exception:
-        pass
+    """Real-time last-traded price: Binance (both hosts) -> Bybit -> OKX."""
+    body = _binance_get("/ticker/price", params={"symbol": symbol}, timeout=6)
+    if body is not None:
+        return float(body["price"])
 
     try:
         r = requests.get(
