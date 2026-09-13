@@ -12,7 +12,7 @@ import { supabase, isConfigured } from '@/lib/supabase'
 
 export interface MonthlyRow {
   month: string           // 'YYYY-MM-01'
-  market: 'crypto' | 'crypto_options' | 'stocks'
+  market: 'crypto' | 'crypto_options' | 'new_shorts'
   trades: number
   wins: number
   losses: number
@@ -27,14 +27,14 @@ export interface MonthlyRow {
 const MARKETS = {
   crypto:         { label: 'Crypto',  color: '#f59e0b' },
   crypto_options: { label: 'Options', color: '#818cf8' },
-  stocks:         { label: 'Stocks',  color: '#22c55e' },
+  new_shorts:     { label: 'Shorts',  color: '#22c55e' },
 } as const
 
 const monthLabel = (m: string) =>
   new Date(m + 'T00:00:00Z').toLocaleDateString('en-US',
     { month: 'short', year: 'numeric', timeZone: 'UTC' })
 
-/** P&L is percent for crypto/stocks and USD for crypto options — never mix them. */
+/** P&L is percent for crypto/new_shorts and USD for crypto options — never mix them. */
 const fmtPnl = (v: number, unit: 'pct' | 'usd') => {
   const sign = v >= 0 ? '+' : '−'
   const n = Math.abs(v)
@@ -157,7 +157,7 @@ const MonthlyTrackRecord = memo(function MonthlyTrackRecord() {
       ))}
 
       <p className="text-[11px] text-[#8b949e] pt-1">
-        P&amp;L is the sum of per-trade returns (% for crypto and stocks,
+        P&amp;L is the sum of per-trade returns (% for crypto and shorts,
         USD for crypto options) — not a compounded account return. Kept
         permanently; raw signals are deleted after 90 days.
       </p>
