@@ -5,7 +5,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/signal.dart';
 import '../models/market_sentiment.dart';
 import '../models/crypto_option_signal.dart';
-import '../models/stock_signal.dart';
+import '../models/new_listing_short.dart';
 import '../utils/app_error.dart';
 
 class SupabaseService {
@@ -95,17 +95,21 @@ class SupabaseService {
             .toList();
       });
 
-  /// US stock swing signals from the last 90 days, newest first.
-  static Future<List<StockSignal>> fetchStockSignals() => _guard(() async {
+  /// "Short new listing" signals from the last 90 days, newest first.
+  /// Replaces fetchStockSignals() — US stock signals were deprecated.
+  static Future<List<NewListingShort>> fetchNewListingShorts() =>
+      _guard(() async {
         final cutoff = DateTime.now()
             .subtract(const Duration(days: 90))
             .toIso8601String();
         final data = await _db
-            .from('stock_signals')
+            .from('new_listing_shorts')
             .select()
             .gte('timestamp', cutoff)
             .order('timestamp', ascending: false);
-        return data.map<StockSignal>((e) => StockSignal.fromJson(e)).toList();
+        return data
+            .map<NewListingShort>((e) => NewListingShort.fromJson(e))
+            .toList();
       });
 
   /// Most recent market sentiment row.

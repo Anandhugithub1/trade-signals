@@ -13,7 +13,7 @@ import 'screens/disclaimer_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/signals_screen.dart';
 import 'screens/crypto_options_screen.dart';
-import 'screens/stocks_screen.dart';
+import 'screens/new_listing_shorts_screen.dart';
 import 'screens/profile_screen.dart';
 
 void main() async {
@@ -74,7 +74,7 @@ class _MainShellState extends State<MainShell> {
     HomeScreen(),
     SignalsScreen(),
     CryptoOptionsScreen(),
-    StocksScreen(),
+    NewListingShortsScreen(),
     ProfileScreen(),
   ];
 
@@ -120,9 +120,9 @@ class _MainShellState extends State<MainShell> {
               label: 'Options',
             ),
             NavigationDestination(
-              icon: Icon(Icons.trending_up_outlined, color: c.t3),
-              selectedIcon: Icon(Icons.trending_up_rounded, color: c.accent),
-              label: 'Stocks',
+              icon: Icon(Icons.trending_down_outlined, color: c.t3),
+              selectedIcon: Icon(Icons.trending_down_rounded, color: c.accent),
+              label: 'Shorts',
             ),
             NavigationDestination(
               icon: Icon(Icons.person_outline_rounded, color: c.t3),

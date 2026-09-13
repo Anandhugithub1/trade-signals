@@ -1,5 +1,8 @@
-name: Refresh Stock Prices
+name: Refresh Stock Prices (disabled — replaced by New Listing Shorts)
 
+# DISABLED 2026-09-13: US stock signals were deprecated (see
+# stock_signals.yml). Schedule removed; workflow_dispatch only.
+#
 # Updates `latest_price` on OPEN US stock signals every 4h using a live
 # quote — does NOT generate new signals and does NOT close trades. Those
 # stay on generate_stock_signals/check_stock_signals' own once/day
@@ -9,8 +12,6 @@ name: Refresh Stock Prices
 # known price), so no market-hours gating — see refresh_prices.py's own
 # docstring.
 on:
-  schedule:
-    - cron: '15 */4 * * *'
   workflow_dispatch:
 
 jobs:

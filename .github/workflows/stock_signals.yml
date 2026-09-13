@@ -1,5 +1,20 @@
-name: US Stock Signals
+name: US Stock Signals (disabled — replaced by New Listing Shorts)
 
+# DISABLED 2026-09-13: superseded by .github/workflows/new_listing_shorts.yml
+# and the "short new listings" module. The app's 4th tab now reads
+# new_listing_shorts instead of stock_signals. This code and workflow are
+# kept on disk (not deleted) in case US stock signals are wanted again
+# later, but the schedule trigger is removed so it no longer runs or writes
+# to the live table. Use workflow_dispatch to run it manually if ever
+# needed.
+#
+# The stock_signals Supabase table, its schema, and its RLS policies are
+# left completely untouched by this deprecation — old installed APKs that
+# still show a Stocks tab keep querying stock_signals successfully; the
+# feed simply stops getting new rows and ages out gracefully via the app's
+# existing 90-day window and empty-state UI (no schema change means no
+# crash risk for users who never update).
+#
 # US market hours are 09:30-16:00 ET. We run ONCE per weekday after the
 # close, on completed daily bars — the strategy is a daily-bar swing system,
 # so there is nothing to gain from intraday runs.
@@ -12,9 +27,7 @@ name: US Stock Signals
 # it. Scheduled runs can also be delayed under load — harmless here, since a
 # daily bar does not change once the session has ended.
 on:
-  schedule:
-    - cron: '30 21 * * 1-5'
-  workflow_dispatch:
+  workflow_dispatch:            # manual "Run workflow" button only — schedule removed
 
 jobs:
   signals:

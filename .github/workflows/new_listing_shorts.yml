@@ -1,0 +1,59 @@
+name: New Listing Shorts
+
+# A listing only enters the eligible age window (27-33 days old) once in its
+# lifetime, so this only needs to run a few times a day, not hourly — the
+# window is deliberately wide (see strategy.py) so GitHub's scheduling
+# jitter (see "crypto option trading"'s README — real gaps average well
+# over an hour) can't cause a listing to be missed entirely.
+on:
+  schedule:
+    - cron: '20 */6 * * *'   # every 6 hours
+  workflow_dispatch:
+    inputs:
+      stop_pct:
+        description: 'Stop-loss, adverse move (0.30 = 30%)'
+        required: false
+        default: '0.30'
+      lock_pct:
+        description: 'Profit lock, favourable move (0.50 = 50%)'
+        required: false
+        default: '0.50'
+
+jobs:
+  signal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: 'short new listings/requirements.txt'
+
+      - name: Install dependencies
+        run: pip install -r "short new listings/requirements.txt"
+
+      - name: Generate signals
+        env:
+          STOP_PCT: ${{ github.event.inputs.stop_pct || '0.30' }}
+          LOCK_PCT: ${{ github.event.inputs.lock_pct || '0.50' }}
+          MAX_HOLD_DAYS: '30'
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        working-directory: 'short new listings'
+        run: python src/run_signal.py
+
+      # Close out open positions: mark win/loss/expired. Runs even if
+      # generation failed, since open trades still need resolving.
+      - name: Check open signals
+        if: always()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        working-directory: 'short new listings'
+        run: python src/check_signals.py

@@ -48,11 +48,12 @@ RECOMPUTE_MONTHS = 4
 # Each market: table, the column holding realised P&L, and its unit.
 #   crypto         — no stored P&L column, so it is derived from entry vs close_price
 #   crypto_options — pnl_usd is already USD
-#   stocks         — pnl_pct is already a percentage
+#   new_shorts     — pnl_pct is already a percentage (replaced "stocks",
+#                    deprecated 2026-09-13, see stock_signals.yml)
 MARKETS = {
     "crypto": {"table": "trade_signals", "unit": "pct"},
     "crypto_options": {"table": "crypto_option_signals", "unit": "usd"},
-    "stocks": {"table": "stock_signals", "unit": "pct"},
+    "new_shorts": {"table": "new_listing_shorts", "unit": "pct"},
 }
 
 
@@ -76,7 +77,7 @@ def trade_pnl(market: str, row: dict) -> float | None:
         v = row.get("pnl_usd")
         return float(v) if v is not None else None
 
-    if market == "stocks":
+    if market == "new_shorts":
         v = row.get("pnl_pct")
         return float(v) if v is not None else None
 

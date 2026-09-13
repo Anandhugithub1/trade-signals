@@ -12,7 +12,7 @@
 
 CREATE TABLE IF NOT EXISTS public.monthly_summary (
     month        date    NOT NULL,          -- first day of the month (UTC)
-    market       text    NOT NULL,          -- 'crypto' | 'crypto_options' | 'stocks'
+    market       text    NOT NULL,          -- 'crypto' | 'crypto_options' | 'new_shorts'
 
     trades       integer NOT NULL DEFAULT 0,  -- closed trades only
     wins         integer NOT NULL DEFAULT 0,
