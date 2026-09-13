@@ -140,20 +140,45 @@ python src/run_signal.py
 
 ---
 
+## Push notifications — old app installs never get these
+
+New-signal and win/loss-resolution pushes exist (`src/push_notify.py`,
+same FCM v1 pattern as the other engines), but are gated to devices
+running app build **2 or later** — the first build that has the Shorts
+tab at all. The app was never version-bumped before this feature shipped
+(every APK built before it reports `1.0.0+1` forever, since an already-
+installed binary's code cannot retroactively learn to send a new field),
+so `notification_tokens.build_number` is the only thing separating "has
+this feature" from "would just get a confusing push about a tab they
+don't have." See `schema/migration_notification_build_gating.sql` and
+`app/lib/services/push_notification_service.dart` for the full mechanism.
+
+Requires the same `FIREBASE_SERVICE_ACCOUNT_JSON` secret (or a local
+`FIREBASE_SERVICE_ACCOUNT_PATH`) the other engines use — set once,
+already shared.
+
+---
+
 ## Files
 
 ```
 short new listings/
 ├── requirements.txt
 ├── README.md
-├── schema/new_listing_shorts.sql
-├── tests/test_strategy.py
+├── schema/
+│   ├── new_listing_shorts.sql
+│   └── migration_notification_build_gating.sql
+├── tests/
+│   ├── test_strategy.py
+│   ├── test_data_feed.py
+│   └── test_push_notify.py
 └── src/
-    ├── data_feed.py       # Binance listings + daily klines
+    ├── data_feed.py       # Binance (+www.binance.com fallback) listings/klines
     ├── strategy.py        # entry window + stop/lock rule
     ├── backtest.py        # validation harness (this file's numbers)
     ├── run_signal.py      # CI entry point — scans + writes new signals
     ├── check_signals.py   # CI entry point — resolves open signals
+    ├── push_notify.py     # build-gated FCM push (new signal + win/loss)
     └── supabase_writer.py
 ```
 

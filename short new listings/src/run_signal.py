@@ -25,6 +25,22 @@ from data_feed import get_usdt_perp_listings, get_live_price
 from strategy import StrategyParams, evaluate_listing
 
 
+def _notify(symbol: str) -> None:
+    """
+    Push "new signal" alert, only to devices new enough to have the Shorts
+    tab (see push_notify.py). Never fails the run — a push failure must
+    not prevent the signal from being recorded.
+    """
+    try:
+        from supabase_writer import _client
+        from push_notify import notify_new_signal
+        client = _client()
+        if client is not None:
+            notify_new_signal(client, symbol)
+    except Exception as e:  # noqa: BLE001
+        print(f"  [FCM] skipped: {e}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--stop-pct", type=float, default=float(os.getenv("STOP_PCT", "0.30")))
@@ -62,6 +78,7 @@ def main() -> None:
         try:
             if insert_signal(sig, args.max_hold_days):
                 fired += 1
+                _notify(sig.symbol)
         except Exception as e:  # noqa: BLE001 -- never fail the run on DB issues
             print(f"  [supabase] skipped: {e}")
 

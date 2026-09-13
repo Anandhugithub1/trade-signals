@@ -161,6 +161,11 @@ def main() -> None:
             print(f"  {SEP}\n  {symbol} id={sid[:8]} -> {verdict['result'].upper()} "
                   f"({verdict['exit_reason']}) exit={verdict.get('exit_price')} "
                   f"pnl={verdict.get('pnl_pct', 0):+.2f}% closed_at={verdict.get('closed_at')}")
+            try:
+                from push_notify import notify_signal_result
+                notify_signal_result(client, symbol, verdict.get("result"), verdict.get("pnl_pct"))
+            except Exception as e:  # noqa: BLE001 -- never fail resolution over a push error
+                print(f"  [FCM] skipped: {e}")
         except Exception as e:  # noqa: BLE001
             errors += 1
             print(f"  [ERR] {sid[:8]}: {type(e).__name__}: {e}")

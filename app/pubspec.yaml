@@ -16,7 +16,14 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+# 1.1.0+2: first build to report its build_number when registering for
+# push (see push_notification_service.dart / FEATURE_MIN_BUILD in the
+# "short new listings" backend) -- this is what lets "New Listing Shorts"
+# push notifications skip devices still running the pre-Shorts-tab app.
+# Never had a build bump before this; every APK before this one reports
+# 1.0.0+1 and always will (their code can't send a field it doesn't know
+# about), which is exactly what makes the gating work.
+version: 1.1.0+2
 
 environment:
   sdk: ^3.12.2
@@ -38,6 +45,10 @@ dependencies:
   firebase_core: ^3.13.0
   firebase_messaging: ^15.2.5
   shared_preferences: ^2.3.0
+  package_info_plus: ^8.1.2  # reads the installed build number, sent with the
+                              # push token so old installs never get pushes
+                              # for features they don't have (see schema
+                              # migration in "short new listings/schema")
 
 dev_dependencies:
   flutter_test:
