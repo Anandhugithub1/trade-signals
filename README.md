@@ -18,7 +18,7 @@ trade pilot/
 │   ├── execute_signals/       Dry-run CoinDCX execution for donchian signals
 │   ├── monthly_summary/       Permanent monthly P&L rollup across all engines
 │   └── trade_checker/         Standalone diagnostic script
-├── crypto option trading/     BTC/ETH options — buy CALL/PUT, 24-month backtested
+├── crypto option trading/     BTC/ETH options — retired (no edge after theta), kept on disk
 ├── short new listings/        Short newly-listed Binance perps, 27-33 days post-listing
 ├── nifty option trading/      NIFTY 50 index options (deprecated, kept on disk)
 ├── dashboard/                 Next.js 16 admin dashboard (auth-gated)
@@ -45,7 +45,7 @@ read-only public access and service-role-only writes.
 | Engine | Status |
 |---|---|
 | Crypto futures (`backend/generate_signals`) | Live |
-| Crypto options (`crypto option trading`) | Live |
+| Crypto options (`crypto option trading`) | Retired 2026-09-25 — no edge after theta; resolver still closes open positions |
 | Short new listings (`short new listings`) | Live |
 | US stock signals (`backend/generate_stock_signals`) | Deprecated — code kept, cron disabled |
 | NIFTY options (`nifty option trading`) | Deprecated — code kept, cron disabled |

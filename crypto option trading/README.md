@@ -1,5 +1,40 @@
 # BTC / ETH Option Signals
 
+> ## ⛔ RETIRED 2026-09-25 — no edge once time decay is priced in
+>
+> New signals are no longer generated on schedule; the resolver keeps
+> running so positions opened before retirement still close out. Code and
+> data are kept. The numbers further down this README came from a
+> **delta-only** P&L model that ignores theta — that's the flaw.
+>
+> **Live record** (Aug 19 – Sep 25): 19 signals → 3 wins, 14 losses,
+> 1 expired, 1 pending ≈ **−$2,050** at $200 risk/trade.
+>
+> **Re-test on fresh 24-month data, every trade re-priced with
+> Black-Scholes** (ATM, ~96h expiry, IV = trailing 30-day realized vol):
+>
+> | Config | In-sample (to Feb 2026) | Out-of-sample (Feb–Sep 2026) |
+> |---|---|---|
+> | Current (stop 2.0×ATR, target 2.5×ATR) — delta model | PF 1.14, +10.8R | PF 1.13, +5.3R |
+> | Current — **with theta** | PF 1.00, −0.4R | PF 0.94, −2.7R |
+> | 1:3 (stop 1.0×, target 3.0×) — with theta | PF 0.96, −10.0R | PF 0.75, −35.5R |
+> | 1:3 (stop 1.5×, target 4.5×) — with theta | PF 0.89, −23.9R | PF 0.87, −14.8R |
+> | 1:3 (stop 2.0×, target 6.0×, ADX≥30) — with theta | PF 0.89, −8.6R | PF 0.94, −1.9R |
+>
+> (R = one $200 stop-out.) The current config's whole edge was ~+$14/trade
+> in the delta model; theta on a ~4-day ATM option held ~17h costs more
+> than that. **1:3 reward:risk made it worse, not better**: the tighter
+> stop gets hit far more often (win rate 21–27%, at/below the 25%
+> breakeven), and a tighter stop means a *bigger* position, so the
+> premium outlay and theta bleed per trade go up (~$1,150 outlay vs
+> ~$560). No 1:3 variant was positive in both halves of the data even
+> before theta. Full sweep: 19 configs (ADX 20/25/30 × stop 1.0/1.5/2.0 ×
+> hold 72h/168h).
+>
+> If this is ever revisited: the trend signal itself is roughly
+> breakeven, not a real edge, so a different *instrument* (perp futures,
+> no theta) wouldn't rescue it either — it needs a different signal.
+
 A technical-analysis signal engine for **BTC and ETH options**, adapted from
 this repo's earlier NIFTY 50 index-options engine (`../nifty option trading`)
 for a 24/7 crypto market. It generates **BUY CALL / BUY PUT** signals from

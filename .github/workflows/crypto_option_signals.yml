@@ -1,13 +1,22 @@
-name: Crypto Option Signals
+name: Crypto Option Signals (retired — resolver only)
 
-# Crypto trades 24/7 — unlike the old NIFTY workflow this has no market-hours
-# window. The strategy runs on 1h bars (see "crypto option trading"), so
-# generation runs hourly; check_signals also runs hourly to resolve
-# stop/target/timeout on open positions.
+# RETIRED 2026-09-25: no edge once option time decay is priced in. See
+# "crypto option trading/README.md" -> "Retired" for the full numbers.
+#
+# NEW SIGNALS: no longer generated on schedule. The generation step only
+# runs on a manual workflow_dispatch (kept for testing / re-evaluation).
+#
+# RESOLVER: still runs every 6h so positions opened before retirement close
+# out properly instead of sitting 'pending' forever. check_signals.py
+# replays candles from each signal's entry time, so running it less often
+# doesn't change any outcome — it only changes when it gets recorded. With
+# nothing pending it exits in seconds.
+#
+# The crypto_option_signals table, schema and RLS are untouched, so every
+# installed app version keeps showing the existing history without errors.
 on:
   schedule:
-    - cron: '5 * * * *'    # :05 past every hour — offset so it doesn't clash
-                            # with other crons at :00
+    - cron: '35 */6 * * *'   # resolver only (see above)
   workflow_dispatch:
     inputs:
       max_loss:
@@ -36,7 +45,9 @@ jobs:
           pip install -r "crypto option trading/requirements.txt"
           pip install supabase python-dotenv
 
-      - name: Generate signals (BTC + ETH)
+      # Retired: manual runs only, never on the schedule.
+      - name: Generate signals (BTC + ETH) — manual runs only
+        if: github.event_name == 'workflow_dispatch'
         env:
           MAX_LOSS: ${{ github.event.inputs.max_loss || '200' }}
           SYMBOLS: 'BTCUSDT,ETHUSDT'
@@ -47,9 +58,7 @@ jobs:
         run: python src/run_signal.py
 
       # Close out open positions: mark win/loss/expired, record pnl_usd and
-      # closed_at. Without this every signal stays 'pending' forever and the
-      # app's win-rate / P&L cards read as empty. Runs even if generation
-      # failed, since open trades still need to be resolved.
+      # closed_at.
       - name: Check open signals
         if: always()
         env:
