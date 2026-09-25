@@ -11,6 +11,7 @@ import { isAdmin } from '@/lib/admin'
 import { createClient } from '@/lib/supabase'
 import type { TradeSignal } from '@/types/signal'
 import MonthlyTrackRecord from '@/components/MonthlyTrackRecord'
+import { ENGINES, TRADE_SIZE, summarize, tradePnlPct, tradeR, fmtUsd, fmtRatio } from '@/lib/pnl'
 
 interface Sentiment {
   id: string; date: string
@@ -190,15 +191,16 @@ export default function Analytics() {
     Bullish: x.bullish_pct, Neutral: x.neutral_pct, Bearish: x.bearish_pct,
   })), [sent])
 
-  // Equity curve — cumulative P&L at $1,000/trade using the algorithm's
-  // actual TP/SL percentages (3.5% win = +$35, 2% loss = -$20)
+  // Equity curve — cumulative realized P&L at $1,000/trade, from each
+  // trade's actual entry → exit price (lib/pnl). Previously assumed a flat
+  // +$35/−$20 per trade, which matched neither live engine.
   const equity = useMemo(() => {
     const closed = signals
-      .filter(x => x.result === 'win' || x.result === 'loss')
+      .filter(x => tradePnlPct(x) != null)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
     let cum = 0
     return closed.map((x, i) => {
-      cum += x.result === 'win' ? 35 : -20
+      cum += ((tradePnlPct(x) ?? 0) / 100) * TRADE_SIZE
       return {
         n: i + 1,
         date: new Date(x.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
@@ -211,39 +213,18 @@ export default function Analytics() {
   const eqColor  = finalPnl >= 0 ? '#22c55e' : '#ef4444'
 
   // ── Engine comparison ──────────────────────────────────────────────────────
-  // Realized R-multiple per trade, computed from actual entry/stop/target —
-  // NOT the equity curve's fixed $35/-$20 (that assumes one flat TP/SL % for
-  // every trade, which donchian's 3R target and mean_reversion's ~1:1 target
-  // both violate). risk = |entry - stop_loss|; a win realizes the full
-  // planned reward (take_profit distance), a loss realizes -1R by
-  // definition of the stop.
-  const realizedR = (x: TradeSignal): number | null => {
-    const risk = Math.abs(x.entry - x.stop_loss)
-    if (!risk) return null
-    if (x.result === 'win')  return Math.abs(x.take_profit - x.entry) / risk
-    if (x.result === 'loss') return -1
-    return null
-  }
-
-  const ENGINES = [
-    { key: 'donchian',       label: 'Donchian',       color: '#22c55e' },
-    { key: 'mean_reversion', label: 'Mean Reversion', color: '#6366f1' },
-  ] as const
+  // Realized R per trade = actual % move (entry → exit price) ÷ that trade's
+  // own stop distance (lib/pnl). Uses the real exit, not the planned
+  // target, and includes filled trades that closed by expiry.
 
   const engineStats = useMemo(() => ENGINES.map(eng => {
-    const rows   = signals.filter(x => x.strategy === eng.key)
-    const closed = rows.filter(x => x.result === 'win' || x.result === 'loss')
-    const wins   = closed.filter(x => x.result === 'win').length
-    const losses = closed.length - wins
-    const rs      = closed.map(realizedR).filter((r): r is number => r !== null)
-    const totalR   = rs.reduce((a, r) => a + r, 0)
-    const grossWin  = rs.filter(r => r > 0).reduce((a, r) => a + r, 0)
-    const grossLoss = Math.abs(rs.filter(r => r < 0).reduce((a, r) => a + r, 0))
-    const pf = grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? Infinity : 0)
+    const rows = signals.filter(x => x.strategy === eng.key)
+    const s = summarize(rows)
     return {
-      ...eng, rows: rows.length, closed: closed.length, wins, losses,
-      winRate: wr(wins, closed.length), totalR, pf,
-      pending: rows.filter(x => x.result === 'pending').length,
+      ...eng, rows: rows.length, closed: s.trades, wins: s.wins, losses: s.losses,
+      winRate: s.winRate, totalR: s.totalR, pf: s.pf ?? 0,
+      pending: s.pending, netUsd: s.netUsd, profitLossRatio: s.profitLossRatio,
+      plannedRR: s.plannedRR,
     }
   }), [signals])
 
@@ -253,11 +234,11 @@ export default function Analytics() {
   const engineEquity = useMemo(() => {
     const series = ENGINES.map(eng => {
       const closed = signals
-        .filter(x => x.strategy === eng.key && (x.result === 'win' || x.result === 'loss'))
+        .filter(x => x.strategy === eng.key && tradeR(x) != null)
         .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
       let cum = 0
       return closed.map(x => {
-        const r = realizedR(x)
+        const r = tradeR(x)
         cum += r ?? 0
         return { date: new Date(x.timestamp).getTime(), key: eng.key, cum: Math.round(cum * 100) / 100 }
       })
@@ -339,7 +320,7 @@ export default function Analytics() {
         {/* ── Equity curve ── */}
         <Section
           title="Equity Curve — $1,000 per trade"
-          sub="Cumulative P&L across closed signals in chronological order, using the algorithm's 3.5% TP / 2% SL."
+          sub="Cumulative P&L across closed signals in chronological order, at $1,000 per trade, from each trade's actual entry → exit price."
           right={equity.length > 0 ? (
             <span className="text-lg font-black flex-shrink-0" style={{ color: eqColor }}>
               {finalPnl >= 0 ? '+' : '−'}${Math.abs(finalPnl).toFixed(0)}
@@ -390,9 +371,12 @@ export default function Analytics() {
                         </span>
                       </div>
                       <div className="grid grid-cols-3 gap-3">
-                        <Pill label="Win Rate" value={e.closed > 0 ? `${e.winRate}%` : '—'} sub={`${e.wins}W / ${e.losses}L`} />
+                        <Pill label="Win Rate" value={e.closed > 0 ? `${e.winRate.toFixed(0)}%` : '—'} sub={`${e.wins}W / ${e.losses}L`} />
                         <Pill label="Profit Factor" value={e.pf === Infinity ? '∞' : e.closed > 0 ? e.pf.toFixed(2) : '—'} />
                         <Pill label="Total R" value={`${e.totalR >= 0 ? '+' : ''}${e.totalR.toFixed(1)}R`} />
+                        <Pill label={`Net @ $${TRADE_SIZE.toLocaleString()}`} value={e.closed > 0 ? fmtUsd(e.netUsd) : '—'} />
+                        <Pill label="Profit : Loss" value={e.profitLossRatio == null ? '—' : `${e.profitLossRatio.toFixed(2)} : 1`} sub="avg win ÷ avg loss" />
+                        <Pill label="Planned R:R" value={fmtRatio(e.plannedRR)} />
                       </div>
                       <div className="mt-3 h-1.5 bg-[#0d1117] rounded-full overflow-hidden">
                         <div className="h-full rounded-full" style={{ width: `${e.winRate}%`, background: wrC, transition: 'width .4s ease' }} />
@@ -596,7 +580,7 @@ export default function Analytics() {
         </Section>
 
         {/* ── P&L Simulator ── */}
-        <PnLSimulator wins={s.wins} losses={s.losses} />
+        <PnLSimulator signals={signals} />
 
         {/* ── Pair detail table ── */}
         <Section title="Pair Detail Table">
@@ -634,34 +618,67 @@ export default function Analytics() {
   )
 }
 
+function SimResult({ title, net, gp, gl, sub }: { title: string; net: number; gp: number; gl: number; sub: string }) {
+  const c = net >= 0 ? '#22c55e' : '#ef4444'
+  return (
+    <div className="bg-[#0d1117] border border-[#30363d] rounded-xl p-5">
+      <p className="text-[11px] text-[#8b949e] uppercase tracking-widest font-medium mb-2">{title}</p>
+      <p className="text-4xl font-black tracking-tight" style={{ color: c }}>{fmtUsd(net)}</p>
+      <p className="text-[#8b949e] text-xs mt-2">{sub}</p>
+      <div className="mt-3 h-2 bg-[#21262d] rounded-full overflow-hidden flex">
+        {gp + gl > 0 && (<>
+          <div className="h-full bg-[#22c55e]" style={{ width: `${(gp / (gp + gl)) * 100}%` }} />
+          <div className="h-full bg-[#ef4444]" style={{ width: `${(gl / (gp + gl)) * 100}%` }} />
+        </>)}
+      </div>
+      <div className="flex justify-between text-[10px] mt-1.5">
+        <span className="text-[#22c55e]">profit {fmtUsd(gp)}</span>
+        <span className="text-[#ef4444]">loss {fmtUsd(-gl)}</span>
+      </div>
+    </div>
+  )
+}
+
+
 // ── P&L Simulator ─────────────────────────────────────────────────────────────
-function PnLSimulator({ wins, losses }: { wins: number; losses: number }) {
-  const [tradeSize, setTradeSize] = useState(100)
-  const [riskPct,   setRiskPct]   = useState(2)
-  const [targetPct, setTargetPct] = useState(3)
+// Replays every closed trade at its ACTUAL outcome (entry → exit price) —
+// no assumed TP/SL %. Two sizing styles:
+//   • Fixed $ per trade  → P&L = trade size × that trade's % move
+//   • Fixed $ risk/trade → P&L = risk × that trade's R (size set so a
+//     stop-out loses exactly the risk amount — how the engines are meant
+//     to be traded, since every signal has its own stop distance)
+function PnLSimulator({ signals }: { signals: TradeSignal[] }) {
+  const [tradeSize, setTradeSize] = useState(1000)
+  const [riskAmt,   setRiskAmt]   = useState(20)
 
   const calc = useMemo(() => {
-    const totalTrades   = wins + losses
-    const winAmount     = (tradeSize * targetPct) / 100
-    const lossAmount    = (tradeSize * riskPct)   / 100
-    const grossProfit   = wins   * winAmount
-    const grossLoss     = losses * lossAmount
-    const net           = grossProfit - grossLoss
-    const totalDeployed = totalTrades * tradeSize
-    const roi           = totalDeployed > 0 ? (net / totalDeployed) * 100 : 0
-    return { winAmount, lossAmount, grossProfit, grossLoss, net, totalDeployed, roi, totalTrades }
-  }, [wins, losses, tradeSize, riskPct, targetPct])
+    const priced = signals
+      .map(x => ({ pct: tradePnlPct(x), r: tradeR(x) }))
+      .filter((t): t is { pct: number; r: number | null } => t.pct != null)
+    const bySize = priced.map(t => (tradeSize * t.pct) / 100)
+    const byRisk = priced.map(t => riskAmt * (t.r ?? 0))
+    const split = (v: number[]) => ({
+      gp: v.filter(x => x > 0).reduce((a, x) => a + x, 0),
+      gl: -v.filter(x => x <= 0).reduce((a, x) => a + x, 0),
+    })
+    const a = split(bySize), b = split(byRisk)
+    const wins = priced.filter(t => t.pct > 0).length
+    return {
+      totalTrades: priced.length, wins, losses: priced.length - wins,
+      sizeNet: a.gp - a.gl, sizeGp: a.gp, sizeGl: a.gl,
+      riskNet: b.gp - b.gl, riskGp: b.gp, riskGl: b.gl,
+      totalR: priced.reduce((s, t) => s + (t.r ?? 0), 0),
+      roi: priced.length ? ((a.gp - a.gl) / (priced.length * tradeSize)) * 100 : 0,
+    }
+  }, [signals, tradeSize, riskAmt])
 
-  const isProfit = calc.net >= 0
-  const netColor = isProfit ? '#22c55e' : '#ef4444'
-
-  const Input = useCallback(({ label, value, onChange, symbol = '$', step = 1 }: {
-    label: string; value: number; onChange: (v: number) => void; symbol?: string; step?: number
+  const Input = useCallback(({ label, value, onChange, step = 1 }: {
+    label: string; value: number; onChange: (v: number) => void; step?: number
   }) => (
     <div>
       <p className="text-[10px] text-[#8b949e] uppercase tracking-wide font-medium mb-1.5">{label}</p>
       <div className="flex items-center gap-1.5 bg-[#21262d] border border-[#30363d] rounded-lg px-3 py-2 focus-within:border-[#6366f1] transition-colors">
-        <span className="text-[#8b949e] text-xs font-semibold">{symbol}</span>
+        <span className="text-[#8b949e] text-xs font-semibold">$</span>
         <input
           type="number" value={value} step={step} min={0}
           onChange={e => onChange(parseFloat(e.target.value) || 0)}
@@ -676,73 +693,32 @@ function PnLSimulator({ wins, losses }: { wins: number; losses: number }) {
       <div className="px-5 sm:px-6 py-4 border-b border-[#21262d]">
         <h2 className="text-sm font-semibold text-white">P&L Simulator</h2>
         <p className="text-[11px] text-[#8b949e] mt-0.5">
-          Simulate real dollar outcome from your {wins + losses} closed signals.
+          Replays your {calc.totalTrades} closed trades at their actual exit prices — each trade&apos;s own
+          profit:loss, no assumed TP/SL %.
         </p>
       </div>
 
       <div className="p-5 sm:p-6 space-y-6">
-        {/* Inputs */}
-        <div className="grid grid-cols-3 gap-3 sm:gap-4">
-          <Input label="Trade Size" value={tradeSize} onChange={setTradeSize} />
-          <Input label="Risk % (SL)" value={riskPct} onChange={setRiskPct} symbol="%" step={0.5} />
-          <Input label="Target % (TP)" value={targetPct} onChange={setTargetPct} symbol="%" step={0.5} />
+        <div className="grid grid-cols-2 gap-3 sm:gap-4">
+          <Input label="Trade size (fixed $ per trade)" value={tradeSize} onChange={setTradeSize} step={100} />
+          <Input label="Risk per trade (stop-out loss)" value={riskAmt} onChange={setRiskAmt} step={5} />
         </div>
 
         {calc.totalTrades === 0 ? (
           <p className="text-[#475569] text-sm text-center py-4">No closed signals yet.</p>
         ) : (
-          <>
-            {/* Net P&L — big number */}
-            <div className="bg-[#0d1117] border border-[#30363d] rounded-xl p-5 text-center">
-              <p className="text-[11px] text-[#8b949e] uppercase tracking-widest font-medium mb-2">Net P&L</p>
-              <p className="text-5xl font-black tracking-tight" style={{ color: netColor }}>
-                {isProfit ? '+' : '−'}${Math.abs(calc.net).toFixed(2)}
-              </p>
-              <p className="text-[#8b949e] text-xs mt-2">
-                from {calc.totalTrades} closed trades · ${tradeSize} each · ROI{' '}
-                <span className="font-bold" style={{ color: netColor }}>
-                  {isProfit ? '+' : ''}{calc.roi.toFixed(2)}%
-                </span>
-              </p>
-            </div>
-
-            {/* Breakdown grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-                { label: 'Gross Profit',   value: `+$${calc.grossProfit.toFixed(2)}`, color: '#22c55e', sub: `${wins} wins × $${calc.winAmount.toFixed(2)}` },
-                { label: 'Gross Loss',     value: `-$${calc.grossLoss.toFixed(2)}`,   color: '#ef4444', sub: `${losses} losses × $${calc.lossAmount.toFixed(2)}` },
-                { label: 'Capital Used',   value: `$${calc.totalDeployed.toFixed(0)}`, color: '#f59e0b', sub: `${calc.totalTrades} trades × $${tradeSize}` },
-                { label: 'Return on Cap',  value: `${isProfit ? '+' : ''}${calc.roi.toFixed(2)}%`, color: netColor, sub: 'net / capital deployed' },
-              ].map(({ label, value, color, sub }) => (
-                <div key={label} className="bg-[#21262d] rounded-xl p-4">
-                  <p className="text-[9px] text-[#8b949e] uppercase tracking-widest font-semibold">{label}</p>
-                  <p className="text-lg font-black mt-1" style={{ color }}>{value}</p>
-                  <p className="text-[10px] text-[#8b949e] mt-1">{sub}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* Visual P&L bar */}
-            <div>
-              <div className="flex justify-between text-[11px] text-[#8b949e] mb-1.5">
-                <span>Profit  ${calc.grossProfit.toFixed(2)}</span>
-                <span>Loss  ${calc.grossLoss.toFixed(2)}</span>
-              </div>
-              <div className="h-3 bg-[#21262d] rounded-full overflow-hidden flex">
-                {calc.grossProfit + calc.grossLoss > 0 && (
-                  <>
-                    <div className="h-full bg-[#22c55e] rounded-l-full transition-all duration-500"
-                      style={{ width: `${(calc.grossProfit / (calc.grossProfit + calc.grossLoss)) * 100}%` }} />
-                    <div className="h-full bg-[#ef4444] rounded-r-full transition-all duration-500"
-                      style={{ width: `${(calc.grossLoss / (calc.grossProfit + calc.grossLoss)) * 100}%` }} />
-                  </>
-                )}
-              </div>
-              <p className="text-[10px] text-[#8b949e] mt-2 text-center">
-                Assumptions: each win earns <span className="text-[#22c55e] font-bold">${calc.winAmount.toFixed(2)}</span> · each loss costs <span className="text-[#ef4444] font-bold">${calc.lossAmount.toFixed(2)}</span>
-              </p>
-            </div>
-          </>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <SimResult
+              title={`$${tradeSize.toLocaleString()} per trade`}
+              net={calc.sizeNet} gp={calc.sizeGp} gl={calc.sizeGl}
+              sub={`${calc.wins}W / ${calc.losses}L · return on capital ${calc.roi >= 0 ? '+' : ''}${calc.roi.toFixed(2)}% per trade`}
+            />
+            <SimResult
+              title={`$${riskAmt.toLocaleString()} risked per trade`}
+              net={calc.riskNet} gp={calc.riskGp} gl={calc.riskGl}
+              sub={`${calc.totalR >= 0 ? '+' : ''}${calc.totalR.toFixed(1)}R total · a stop-out always costs $${riskAmt}`}
+            />
+          </div>
         )}
       </div>
     </div>
