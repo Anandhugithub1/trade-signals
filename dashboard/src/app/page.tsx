@@ -131,7 +131,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Per-engine breakdown: each engine has its own profit:loss shape */}
-          <div className="grid grid-cols-1 md:grid-cols-2 border-t border-[#2a2a3a] divide-y md:divide-y-0 md:divide-x divide-[#2a2a3a]">
+          <div className="grid grid-cols-1 md:grid-cols-3 border-t border-[#2a2a3a] divide-y md:divide-y-0 md:divide-x divide-[#2a2a3a]">
             {perEngine.map(({ key, label, color, s }) => (
               <div key={key} className="px-5 py-4">
                 <div className="flex items-center justify-between mb-3">

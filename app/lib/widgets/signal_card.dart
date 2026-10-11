@@ -306,10 +306,12 @@ class _EngineChip extends StatelessWidget {
     // (a retired engine's old data) is muted so it reads as historical,
     // not as a live third option.
     final Color color;
-    if (signal.isDonchian) {
+    if (signal.isAlgo1) {
       color = c.long;
-    } else if (signal.isMeanReversion) {
+    } else if (signal.isAlgo2) {
       color = c.accent;
+    } else if (signal.isAlgo3) {
+      color = c.gold;
     } else {
       color = c.t3;
     }

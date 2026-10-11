@@ -34,7 +34,7 @@ class SignalDetailScreen extends StatelessWidget {
             const SizedBox(width: 6),
             _Badge(
                 label: signal.strategyLabel,
-                color: signal.isDonchian ? c.long : c.t3),
+                color: signal.isAlgo1 ? c.long : signal.isAlgo2 ? c.accent : signal.isAlgo3 ? c.gold : c.t3),
             const SizedBox(width: 6),
             _Badge(label: dirLabel, color: dirColor),
             if (!signal.isPending) ...[
@@ -227,17 +227,17 @@ class _PriceLevelsCard extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: (signal.isDonchian ? c.long : c.t3)
+                          color: (signal.isAlgo1 ? c.long : signal.isAlgo2 ? c.accent : signal.isAlgo3 ? c.gold : c.t3)
                               .withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(6),
                           border: Border.all(
-                              color: (signal.isDonchian ? c.long : c.t3)
+                              color: (signal.isAlgo1 ? c.long : signal.isAlgo2 ? c.accent : signal.isAlgo3 ? c.gold : c.t3)
                                   .withValues(alpha: 0.4)),
                         ),
                         child: Text(
                           signal.strategyFullName,
                           style: TextStyle(
-                            color: signal.isDonchian ? c.long : c.t2,
+                            color: signal.isAlgo1 ? c.long : signal.isAlgo2 ? c.accent : signal.isAlgo3 ? c.gold : c.t2,
                             fontSize: 12,
                             fontWeight: FontWeight.w800,
                             letterSpacing: 0.3,

@@ -6,6 +6,7 @@ import { friendlyError } from '@/components/Toast'
 
 type DirFilter = 'all' | 'long' | 'short'
 type ResFilter = 'all' | 'pending' | 'win' | 'loss' | 'expired'
+type EngineFilter = 'all' | 'donchian' | 'algo2' | 'algo3'
 
 export default function SignalsPage() {
   const [signals, setSignals] = useState<TradeSignal[]>([])
@@ -13,6 +14,7 @@ export default function SignalsPage() {
   const [error, setError] = useState<string | null>(null)
   const [dirFilter, setDirFilter] = useState<DirFilter>('all')
   const [resFilter, setResFilter] = useState<ResFilter>('all')
+  const [engineFilter, setEngineFilter] = useState<EngineFilter>('all')
   const [search, setSearch] = useState('')
 
   useEffect(() => {
@@ -41,7 +43,8 @@ export default function SignalsPage() {
     const matchSearch = search === '' || s.pair.toLowerCase().includes(search.toLowerCase())
     const matchDir = dirFilter === 'all' || s.direction === dirFilter
     const matchRes = resFilter === 'all' || s.result === resFilter
-    return matchSearch && matchDir && matchRes
+    const matchEngine = engineFilter === 'all' || s.strategy === engineFilter
+    return matchSearch && matchDir && matchRes && matchEngine
   })
 
   if (!isConfigured) {
@@ -121,6 +124,27 @@ export default function SignalsPage() {
             </button>
           ))}
         </div>
+
+        <div className="flex gap-1">
+          {([
+            { id: 'all', label: 'All Engines' },
+            { id: 'donchian', label: 'Algo 1 (1:3)' },
+            { id: 'algo2', label: 'Algo 2 (1:2)' },
+            { id: 'algo3', label: 'Algo 3 (1:2)' },
+          ] as const).map((e) => (
+            <button
+              key={e.id}
+              onClick={() => setEngineFilter(e.id)}
+              className={`px-3 py-2 text-xs font-semibold rounded-lg transition-colors ${
+                engineFilter === e.id
+                  ? 'bg-[#6366f1]/20 text-[#818cf8] border border-[#6366f1]/30'
+                  : 'bg-[#1a1a24] text-[#64748b] border border-[#2a2a3a] hover:text-white'
+              }`}
+            >
+              {e.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Table */}
@@ -129,7 +153,7 @@ export default function SignalsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-[#2a2a3a]">
-                {['Pair', 'Direction', 'Entry', 'Last Price', 'SL / TP', 'Strength', 'Date', 'Result', 'Note'].map(
+                {['Pair', 'Strategy', 'Direction', 'Entry', 'Last Price', 'SL / TP', 'Strength', 'Date', 'Result', 'Note'].map(
                   (h) => (
                     <th
                       key={h}
@@ -145,7 +169,7 @@ export default function SignalsPage() {
               {loading ? (
                 [...Array(5)].map((_, i) => (
                   <tr key={i} className="border-b border-[#2a2a3a]/40">
-                    {[...Array(9)].map((_, j) => (
+                    {[...Array(10)].map((_, j) => (
                       <td key={j} className="px-4 py-3.5">
                         <div className="h-3.5 bg-[#2a2a3a] rounded animate-pulse" style={{ width: `${40 + j * 10}%` }} />
                       </td>
@@ -154,7 +178,7 @@ export default function SignalsPage() {
                 ))
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-4 py-16 text-center">
+                  <td colSpan={10} className="px-4 py-16 text-center">
                     <p className="text-[#475569] text-sm">
                       {signals.length === 0
                         ? 'No signals yet. They are generated automatically by the backend.'
@@ -169,6 +193,21 @@ export default function SignalsPage() {
                     className="border-b border-[#2a2a3a]/40 hover:bg-[#1f1f2e] transition-colors"
                   >
                     <td className="px-4 py-3.5 font-bold text-white">{s.pair}</td>
+                    <td className="px-4 py-3.5">
+                      <span
+                        className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
+                          s.strategy === 'donchian'
+                            ? 'bg-[#22c55e]/10 text-[#22c55e] border-[#22c55e]/30'
+                            : s.strategy === 'algo2'
+                            ? 'bg-[#3b82f6]/10 text-[#3b82f6] border-[#3b82f6]/30'
+                            : s.strategy === 'algo3'
+                            ? 'bg-[#f59e0b]/10 text-[#f59e0b] border-[#f59e0b]/30'
+                            : 'bg-[#64748b]/10 text-[#94a3b8] border-[#64748b]/30'
+                        }`}
+                      >
+                        {s.strategy === 'donchian' ? 'Algo 1 (1:3)' : s.strategy === 'algo2' ? 'Algo 2 (1:2)' : s.strategy === 'algo3' ? 'Algo 3 (1:2)' : (s.strategy || 'Algo 1')}
+                      </span>
+                    </td>
                     <td className="px-4 py-3.5">
                       <span
                         className={`text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider border ${

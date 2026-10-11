@@ -1,42 +1,15 @@
 """
-generate_signals — creates trade signals for top 15 crypto pairs by market cap.
+generate_signals — creates trade signals for top crypto pairs by market cap.
 
-NOTE: Gold (XAUUSDT) and Silver (XAGUSDT) commodity perpetuals are dropped for
-now — their perpetual futures markets are thinner and more prone to price
-manipulation than major crypto pairs, which skews the technical indicators.
+Three robust algorithmic engines run side by side:
+  1. Algo 1 (donchian.py) — 55-bar channel breakout, 4h bars, 1:3 R:R target.
+  2. Algo 2 (algo2.py)    — 1h Macro Bull Momentum, 1:2 R:R target (+10% / -5%), LONG only.
+  3. Algo 3 (algo3.py)    — 4h Bearish Macro Breakdown Short, 1:2 R:R target (+10% / -5%), SHORT only.
 
-═══════════════════════════════════════════════════════════════════
- DATA SOURCES  (all free, no API keys required)
-═══════════════════════════════════════════════════════════════════
-  Candles        Binance Futures → Bybit → OKX  (geo-fallback chain)
-  Sentiment      Alternative.me Fear & Greed Index  (dashboard breadth only,
-                 see _pair_trend_direction() — no longer a trading vote input)
-  Derivatives    OKX funding rate + long/short ratio  (per pair, used by
-                 donchian.py/mean_reversion.py's own logic where relevant)
-
-═══════════════════════════════════════════════════════════════════
- ENGINES
-═══════════════════════════════════════════════════════════════════
-  donchian.py        — 55-bar channel breakout, 4h bars, 3R target.
-                        Trend-following: needs only ~25% win rate to break
-                        even. See donchian.py's own docstring for full
-                        strategy + backtest numbers + HONEST LIMITS.
-  mean_reversion.py   — RSI + Bollinger Band range-fade, 4h bars, ~1:1
-                        target, ADX<20 gate (the OPPOSITE of a trend
-                        filter — it wants the ABSENCE of a trend). See
-                        mean_reversion.py's own docstring for full
-                        strategy + backtest numbers + HONEST LIMITS.
-
-REMOVED: the original vote-based momentum engine ("legacy") was retired —
-its own backtest showed a thin, largely fee-consumed edge (35.2% win rate
-against a fixed 2R target, PF 1.09) and was replaced by the two engines
-above. All of its historical trade_signals rows were exported to CSV
-(test_scripts/_exports/) before deletion; see git history for the removed
-analyze_pair() implementation if it's ever needed for reference.
-
-Trigger: every 4h via GitHub Actions cron. Max 3 signals/day PER ENGINE
-(donchian + mean_reversion = 6/day max).
+Replaces the old 1:1 mean reversion engine with 1:2 Algo 2 and Algo 3.
 """
+
+from __future__ import annotations
 
 import json
 import os
@@ -49,7 +22,8 @@ from google.oauth2 import service_account
 import google.auth.transport.requests
 
 from donchian import analyze_donchian
-from mean_reversion import analyze_mean_reversion
+from algo2 import analyze_algo2
+from algo3 import analyze_algo3
 
 try:
     from dotenv import load_dotenv
@@ -61,9 +35,6 @@ except ImportError:
 SUPABASE_URL         = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
-# Firebase service account — two ways to supply credentials:
-#   Local dev  : FIREBASE_SERVICE_ACCOUNT_PATH=./firebase-service-account.json
-#   GitHub CI  : FIREBASE_SERVICE_ACCOUNT_JSON=<entire JSON as one-line secret>
 def _load_firebase_sa() -> str:
     path = os.environ.get("FIREBASE_SERVICE_ACCOUNT_PATH", "")
     if path and os.path.isfile(path):
@@ -84,21 +55,19 @@ _HEADERS = {"User-Agent": "TradePilot/1.0 signal-bot"}
 def _retry(fn, retries: int = 3, backoff: float = 1.5, label: str = ""):
     """
     Call fn() up to `retries` times with exponential backoff.
-    Only retries on transient errors (network / 5xx).  Raises on final failure.
     """
     last_exc: Exception = RuntimeError("no attempts made")
     for attempt in range(retries):
         try:
             return fn()
         except requests.HTTPError as exc:
-            # Don't retry on 4xx (geo-block, bad request) — they won't fix themselves
             if exc.response is not None and exc.response.status_code < 500:
                 raise
             last_exc = exc
         except (requests.ConnectionError, requests.Timeout) as exc:
             last_exc = exc
         except Exception as exc:
-            raise   # unknown error — don't retry
+            raise
 
         wait = backoff * (2 ** attempt)
         lbl  = f" [{label}]" if label else ""
@@ -107,46 +76,23 @@ def _retry(fn, retries: int = 3, backoff: float = 1.5, label: str = ""):
 
     raise last_exc
 
+
 # Top crypto by market cap — stablecoins excluded.
-# All available on Binance/Bybit/OKX USDT-M perpetual futures.
-# Gold (XAUUSDT) / Silver (XAGUSDT) intentionally dropped — see module docstring.
-# BNBUSDT, TRXUSDT, AVAXUSDT, LINKUSDT dropped: they were the consistently
-# weakest performers across both 9-month and 2-year backtests (~23-31% win
-# rate vs ~40-54% for the kept pairs). See test_scripts.
-# BTCUSDT dropped 2026-08-05: 12.5% win rate over 8 closed live trades, the
-# worst of any pair with a meaningful sample. Small n, so this is a judgement
-# call on live results rather than a statistically settled one — re-add if a
-# longer backtest disagrees.
 TOP_PAIRS = [
-    "ETHUSDT",  "SOLUSDT",  "XRPUSDT",  "ADAUSDT",               # 1–4
-    "DOGEUSDT", "TONUSDT",  "DOTUSDT",  "LTCUSDT",  "BCHUSDT",   # 5–9
-    "UNIUSDT",                                                    # 10
+    "ETHUSDT",  "SOLUSDT",  "XRPUSDT",  "ADAUSDT",
+    "DOGEUSDT", "TONUSDT",  "DOTUSDT",  "LTCUSDT",  "BCHUSDT",
+    "UNIUSDT",
 ]
 
-# ── Engine tags (written to the `strategy` column) ────────────────────────────
-# Two engines run side by side so live results can decide between them:
-#   donchian       — channel breakout (4h bars): 30.0% win, PF 1.27 backtested
-#   mean_reversion — range-fade (4h bars): 52.5% win rate / PF 1.11 backtested,
-#                    ~73 trades/yr — a genuinely different mechanism, not a
-#                    tuned variant of a trend-following approach.
-# Donchian is prioritised for the daily slots; see Pass 2.
-DONCHIAN_TAG       = "donchian"
-MEAN_REVERSION_TAG = "mean_reversion"
-LEGACY_TAG         = "legacy"   # retired; kept only as the `held_by` fallback
-                                 # default for any stray pre-existing row
+# ── Engine tags (written to the `strategy` column) ───────────────────────────
+DONCHIAN_TAG = "donchian"  # Algo 1: 1:3 Breakout
+ALGO2_TAG    = "algo2"     # Algo 2: 1:2 Macro Bull Momentum (Long)
+ALGO3_TAG    = "algo3"     # Algo 3: 1:2 Bearish Macro Breakdown (Short)
+LEGACY_TAG   = "legacy"
 
-# Per-ENGINE daily cap, not a shared pool: 3 donchian + 3 mean_reversion =
-# 6/day max. A shared cap meant the prioritised engine took every slot it
-# qualified for and the other got only leftovers, so each engine's sample
-# size depended on how busy the other happened to be. Separate caps let both
-# accumulate trades on their own merit, which is the whole point of running
-# them side by side.
 MAX_SIGNALS_PER_ENGINE = 3
-MAX_SIGNALS            = MAX_SIGNALS_PER_ENGINE * 2   # 6 — used for logging
-
-CANDLE_LIMIT  = 300    # kept for any script still importing it; no longer
-                        # used by this module directly since analyze_pair()
-                        # (the only caller) was removed
+MAX_SIGNALS            = MAX_SIGNALS_PER_ENGINE * 3  # 9 max/day across all 3 engines
+CANDLE_LIMIT           = 300
 SEP = "-" * 60
 
 
@@ -166,12 +112,6 @@ def calc_ema(close: np.ndarray, period: int) -> float:
 
 
 def calc_adx(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 14) -> float:
-    """
-    Average Directional Index (0–100) — measures TREND STRENGTH (not direction).
-      ADX >= 25  strong trend  (momentum strategies work here)
-      ADX <  20  ranging/choppy (momentum whipsaws — sit out)
-    Uses Wilder's smoothing, the standard implementation.
-    """
     high  = high.astype(float)
     low   = low.astype(float)
     close = close.astype(float)
@@ -205,32 +145,15 @@ def calc_adx(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int =
 
 
 def _okx_symbol(pair: str) -> str:
-    """BTCUSDT → BTC-USDT  (OKX instId format)"""
     return pair[:-4] + "-USDT"
 
 
 def fetch_candles(symbol: str, interval: str = "4h") -> list:
-    """
-    Fetch OHLCV candles — three-provider fallback chain. Both remaining
-    engines (donchian, mean_reversion) run on 4h bars.
-
-    All three share the same index layout:
-      [0] open_time_ms  [1] open  [2] high  [3] low  [4] close  [5] volume
-    Bybit and OKX return newest-first so their results are reversed.
-
-    Provider chain:
-      1. Binance Futures  fapi.binance.com  — blocked in US & India (451)
-      2. Bybit Futures    api.bybit.com     — blocked on Azure cloud IPs (403)
-      3. OKX              www.okx.com       — US-accessible, no geo-block ✓
-    """
-    # Each provider spells the same interval differently.
     binance_iv, bybit_iv, okx_iv = {
         "1h": ("1h", "60", "1H"),
         "4h": ("4h", "240", "4H"),
     }[interval]
 
-    # Ask for the provider maximum so both engines' EMA200 regime filters
-    # (which alone need 200 bars of history) have real runway.
     limit = 1000
 
     # 1. Binance Futures
@@ -260,26 +183,17 @@ def fetch_candles(symbol: str, interval: str = "4h") -> list:
     except Exception as e:
         print(f"  [WARN] Bybit error for {symbol} ({e}) — trying OKX")
 
-    # 3. OKX (US-accessible, identical index format, no geo-block)
+    # 3. OKX
     r = requests.get(
         OKX_KLINES,
         params={"instId": _okx_symbol(symbol), "bar": okx_iv, "limit": limit},
         headers=_HEADERS, timeout=10,
     )
     r.raise_for_status()
-    return list(reversed(r.json()["data"]))   # OKX newest-first → reverse
+    return list(reversed(r.json()["data"]))
 
 
 def is_stale_feed(candles: list, lookback: int = 30) -> bool:
-    """
-    True when a feed has flatlined — the same close for `lookback` bars.
-
-    A delisted or halted pair keeps returning candles, but with a frozen
-    price. Every indicator then degenerates: ATR is 0, the Donchian channel
-    has zero width, and EMAs converge on the constant. TONUSDT is currently
-    in this state (identical close for 60+ bars on both 1h and 4h), which
-    would silently feed garbage into both engines rather than erroring.
-    """
     if len(candles) < lookback:
         return False
     closes = {float(c[4]) for c in candles[-lookback:]}
@@ -287,18 +201,6 @@ def is_stale_feed(candles: list, lookback: int = 30) -> bool:
 
 
 def get_live_price(symbol: str) -> float | None:
-    """
-    Fetch the real-time last-traded price from ticker APIs.
-    Used as the signal entry price instead of the stale candle close,
-    which can lag by up to 1h when the candle just opened.
-
-    Same provider fallback chain as fetch_candles:
-      1. Binance Futures  (geo-blocked in some regions)
-      2. Bybit Futures    (blocked on some cloud IPs)
-      3. OKX              (US-accessible, always works from GitHub Actions)
-    Returns None if all providers fail — caller falls back to candle close.
-    """
-    # 1. Binance Futures ticker
     try:
         r = requests.get(
             "https://fapi.binance.com/fapi/v1/ticker/price",
@@ -309,7 +211,6 @@ def get_live_price(symbol: str) -> float | None:
     except Exception:
         pass
 
-    # 2. Bybit Futures ticker
     try:
         r = requests.get(
             "https://api.bybit.com/v5/market/tickers",
@@ -322,7 +223,6 @@ def get_live_price(symbol: str) -> float | None:
     except Exception:
         pass
 
-    # 3. OKX ticker
     try:
         r = requests.get(
             "https://www.okx.com/api/v5/market/ticker",
@@ -333,17 +233,12 @@ def get_live_price(symbol: str) -> float | None:
     except Exception:
         pass
 
-    return None   # all providers failed — caller uses candle close
+    return None
 
 
 # ── external sentiment ────────────────────────────────────────────────────────
 
 def get_fear_greed() -> tuple[int, int, str]:
-    """
-    Returns (vote, raw_value, label).
-    vote:      +1 extreme fear (contrarian bullish), -1 extreme greed, 0 neutral
-    raw_value: 0-100 integer from the Fear & Greed API
-    """
     try:
         r = requests.get(FEAR_GREED_URL, timeout=5)
         d = r.json()["data"][0]
@@ -358,14 +253,7 @@ def get_fear_greed() -> tuple[int, int, str]:
         return 0, -1, f"Fear/Greed unavailable ({exc})"
 
 
-# ── market breadth (dashboard sentiment tally only — NOT a trading signal) ────
-
 def _pair_trend_direction(candles: list) -> int:
-    """Lightweight, engine-agnostic per-pair trend read: ADX(14) confirms a
-    real trend exists, EMA50/EMA200 stack gives its direction. Returns
-    +1 (bull) / -1 (bear) / 0 (no confirmed trend), used ONLY to feed the
-    dashboard's bullish/bearish % breadth chart (_upsert_sentiment) — this
-    never generates a trade signal, unlike the retired analyze_pair()."""
     if len(candles) < 210:
         return 0
     close = np.array([float(c[4]) for c in candles])
@@ -384,13 +272,9 @@ def _pair_trend_direction(candles: list) -> int:
     return 0
 
 
-# ── push notifications ───────────────────────────────────────────────────────
+# ── push notifications ────────────────────────────────────────────────────────
 
 def _get_fcm_access_token() -> tuple[str, str]:
-    """
-    Returns (Bearer token, project_id) using the Firebase service account JSON.
-    The JSON is stored as a string in FIREBASE_SERVICE_ACCOUNT_JSON env var.
-    """
     sa_info   = json.loads(FIREBASE_SA_JSON)
     project   = sa_info["project_id"]
     creds     = service_account.Credentials.from_service_account_info(
@@ -402,24 +286,12 @@ def _get_fcm_access_token() -> tuple[str, str]:
 
 
 def _send_push_notifications(supabase, inserted_signals: list) -> None:
-    """
-    Send FCM V1 push notifications to all enabled devices.
-
-    Uses the FCM HTTP v1 API (the modern API — legacy was deprecated June 2024).
-    Requires FIREBASE_SERVICE_ACCOUNT_JSON env var containing the full
-    service account JSON downloaded from:
-      Firebase Console → Project Settings → Service Accounts → Generate new private key
-
-    Sends one request per device token (V1 API requirement — no batch endpoint).
-    Silently skips if env var is not configured.
-    """
     if not FIREBASE_SA_JSON or not inserted_signals:
         if not FIREBASE_SA_JSON:
             print("  [FCM]  FIREBASE_SERVICE_ACCOUNT_JSON not set — skipping push")
         return
 
     try:
-        # Fetch all enabled device tokens from Supabase
         res = (
             supabase.table("notification_tokens")
             .select("device_token")
@@ -431,19 +303,16 @@ def _send_push_notifications(supabase, inserted_signals: list) -> None:
             print("  [FCM]  No enabled devices — skipping push")
             return
 
-        # Get short-lived OAuth2 access token
         bearer, project_id = _get_fcm_access_token()
         url     = f"https://fcm.googleapis.com/v1/projects/{project_id}/messages:send"
         headers = {"Authorization": f"Bearer {bearer}", "Content-Type": "application/json"}
 
-        # Build notification content
         n      = len(inserted_signals)
         pairs  = ", ".join(s["pair"] for s in inserted_signals[:3])
         plural = "s" if n > 1 else ""
         title  = "New Trade Signal" + ("s" if n > 1 else "")
         body   = f"{n} new signal{plural}: {pairs}"
 
-        # V1 API: one request per token
         ok = fail = 0
         for token in tokens:
             try:
@@ -469,16 +338,9 @@ def _send_push_notifications(supabase, inserted_signals: list) -> None:
         print(f"  [FCM ERR]  {exc}")
 
 
-# ── market sentiment ─────────────────────────────────────────────────────────
+# ── market sentiment ──────────────────────────────────────────────────────────
 
 def _upsert_sentiment(supabase, analyses: list, fg_raw: int, fg_label: str) -> None:
-    """
-    Compute today's market sentiment from all pair analyses and upsert
-    into the market_sentiment table (one row per day, keyed on date).
-
-    Sentiment percentages are derived from how many pairs are bullish/bearish.
-    Active longs/shorts are read from the current pending signals.
-    """
     if not analyses:
         return
 
@@ -493,7 +355,6 @@ def _upsert_sentiment(supabase, analyses: list, fg_raw: int, fg_label: str) -> N
 
     dominant = "bullish" if bullish > bearish else "bearish" if bearish > bullish else "neutral"
 
-    # Count active longs and shorts from pending signals
     pending = (
         supabase.table("trade_signals")
         .select("direction")
@@ -531,8 +392,7 @@ def handler(event=None, context=None):
     today_str = now_utc.strftime("%Y-%m-%d %H:%M UTC")
     print(f"\n[generate_signals] Started at {today_str}")
 
-    # ── Daily cap check ───────────────────────────────────────────────────────
-    # Count signals already created today (midnight UTC → now).
+    # Daily cap check across all 3 engines
     today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     today_rows  = (
         supabase.table("trade_signals")
@@ -541,33 +401,33 @@ def handler(event=None, context=None):
         .execute()
     ).data or []
 
-    # Each engine has its own budget, so count them separately.
     today_by_engine = {
         DONCHIAN_TAG: sum(1 for r in today_rows
                           if (r.get("strategy") or LEGACY_TAG) == DONCHIAN_TAG),
-        MEAN_REVERSION_TAG: sum(1 for r in today_rows
-                          if (r.get("strategy") or LEGACY_TAG) == MEAN_REVERSION_TAG),
+        ALGO2_TAG: sum(1 for r in today_rows
+                       if (r.get("strategy") or LEGACY_TAG) == ALGO2_TAG),
+        ALGO3_TAG: sum(1 for r in today_rows
+                       if (r.get("strategy") or LEGACY_TAG) == ALGO3_TAG),
     }
     donchian_slots = max(0, MAX_SIGNALS_PER_ENGINE - today_by_engine[DONCHIAN_TAG])
-    mr_slots       = max(0, MAX_SIGNALS_PER_ENGINE - today_by_engine[MEAN_REVERSION_TAG])
+    algo2_slots    = max(0, MAX_SIGNALS_PER_ENGINE - today_by_engine[ALGO2_TAG])
+    algo3_slots    = max(0, MAX_SIGNALS_PER_ENGINE - today_by_engine[ALGO3_TAG])
     today_count    = len(today_rows)
-    slots_left     = donchian_slots + mr_slots
+    slots_left     = donchian_slots + algo2_slots + algo3_slots
 
     print(f"[generate_signals] Signals today: {today_count} / {MAX_SIGNALS}  "
-          f"(donchian {today_by_engine[DONCHIAN_TAG]}/{MAX_SIGNALS_PER_ENGINE}, "
-          f"mean_reversion {today_by_engine[MEAN_REVERSION_TAG]}/{MAX_SIGNALS_PER_ENGINE})")
+          f"(Algo1-Donchian: {today_by_engine[DONCHIAN_TAG]}/{MAX_SIGNALS_PER_ENGINE}, "
+          f"Algo2-BullMom: {today_by_engine[ALGO2_TAG]}/{MAX_SIGNALS_PER_ENGINE}, "
+          f"Algo3-Short: {today_by_engine[ALGO3_TAG]}/{MAX_SIGNALS_PER_ENGINE})")
 
     if slots_left == 0:
-        print(f"[generate_signals] Both engines at their daily cap of "
+        print(f"[generate_signals] All 3 engines at daily cap of "
               f"{MAX_SIGNALS_PER_ENGINE} — skipping run.\n")
         return {"statusCode": 200, "body": json.dumps({"skipped": True, "today_count": today_count})}
 
-    print(f"[generate_signals] Room for {donchian_slots} donchian + "
-          f"{mr_slots} mean_reversion signal(s) this run.\n")
+    print(f"[generate_signals] Room for {donchian_slots} Algo1 + "
+          f"{algo2_slots} Algo2 + {algo3_slots} Algo3 signal(s) this run.\n")
 
-    # ── Global indicators (fetched once, applied to all pairs) ───────────────
-    # F&G is kept only for the dashboard's sentiment tally (_upsert_sentiment)
-    # — neither remaining engine uses it as a trading input.
     fg_score, fg_raw, fg_reason = get_fear_greed()
     fg_label = fg_reason.split(" — ")[0] if " — " in fg_reason else fg_reason
     print(f"  Fear & Greed  : {fg_reason}\n")
@@ -581,16 +441,13 @@ def handler(event=None, context=None):
     }
 
     # ── Pass 1: analyse all pairs, collect valid candidates ───────────────────
-    breadth = []   # {"pair": ..., "score": +1/-1/0} for the sentiment tally only
-    donchian_candidates = []   # breakout signals from the trend-following engine
-    mr_candidates       = []   # range-fade signals from the mean-reversion engine
+    breadth = []
+    donchian_candidates = []
+    algo2_candidates    = []
+    algo3_candidates    = []
 
     for pair in TOP_PAIRS:
         try:
-            # A pending position blocks only the ENGINE that opened it, not
-            # the pair. Skipping the whole pair meant a position from one
-            # engine made the other blind to that symbol entirely, so the
-            # two could not be compared fairly.
             existing = (
                 supabase.table("trade_signals")
                 .select("id, timestamp, strategy")
@@ -600,15 +457,15 @@ def handler(event=None, context=None):
             ).data or []
             held_by = {r.get("strategy") or LEGACY_TAG for r in existing}
 
-            # Donchian + mean-reversion both run on the SAME 4h candles,
-            # fetched once and shared between them.
             d4 = None
-            if DONCHIAN_TAG not in held_by or MEAN_REVERSION_TAG not in held_by:
+            d1 = None
+
+            # Fetch 4h candles if any engine has room for this pair
+            if not (DONCHIAN_TAG in held_by and ALGO2_TAG in held_by and ALGO3_TAG in held_by):
                 try:
                     d4 = fetch_candles(pair, interval="4h")
                     if is_stale_feed(d4):
-                        print(f"  [STALE] {pair:<12} — price frozen, feed likely "
-                              f"delisted/halted; skipping all engines")
+                        print(f"  [STALE] {pair:<12} — price frozen, skipping pair")
                         stats["stale_feed"] = stats.get("stale_feed", 0) + 1
                         d4 = None
                 except Exception as exc:
@@ -621,32 +478,55 @@ def handler(event=None, context=None):
 
             stats["analysed"] += 1
             breadth.append({"pair": pair, "score": _pair_trend_direction(d4)})
+            live_px = get_live_price(pair)
 
+            # Fetch 1h candles if Algo 2 or Algo 3 need them
+            if ALGO2_TAG not in held_by or ALGO3_TAG not in held_by:
+                try:
+                    d1 = fetch_candles(pair, interval="1h")
+                except Exception as exc:
+                    print(f"  [1H FETCH ERR] {pair}: {exc}")
+                    d1 = None
+
+            # Evaluate Algo 1 (Donchian 1:3 Breakout)
             if DONCHIAN_TAG in held_by:
-                print(f"  [SKIP] {pair:<12} — donchian position already open")
+                print(f"  [SKIP] {pair:<12} — Algo 1 (Donchian) position already open")
             else:
                 try:
-                    dsig = analyze_donchian(pair, d4, get_live_price(pair))
+                    dsig = analyze_donchian(pair, d4, live_px)
                     if dsig:
                         donchian_candidates.append(dsig)
-                        print(f"  [DONCHIAN] {pair:<12} {dsig['direction'].upper():<5} "
+                        print(f"  [ALGO 1] {pair:<12} {dsig['direction'].upper():<5} "
                               f"entry={dsig['entry']:,.4f} "
                               f"({dsig['_rank']:.2f} ATR beyond channel)")
                 except Exception as exc:
-                    print(f"  [DONCHIAN ERR] {pair}: {exc}")
+                    print(f"  [ALGO 1 ERR] {pair}: {exc}")
 
-            if MEAN_REVERSION_TAG in held_by:
-                print(f"  [SKIP] {pair:<12} — mean_reversion position already open")
-                stats["skipped_existing"] += 1
+            # Evaluate Algo 2 (Macro Bull Momentum 1:2)
+            if ALGO2_TAG in held_by:
+                print(f"  [SKIP] {pair:<12} — Algo 2 (Bull Momentum) position already open")
+            elif d1 is not None:
+                try:
+                    a2sig = analyze_algo2(pair, d1, d4, live_px)
+                    if a2sig:
+                        algo2_candidates.append(a2sig)
+                        print(f"  [ALGO 2] {pair:<12} {a2sig['direction'].upper():<5} "
+                              f"entry={a2sig['entry']:,.4f} rr=1:{a2sig['rr_ratio']:.2f}")
+                except Exception as exc:
+                    print(f"  [ALGO 2 ERR] {pair}: {exc}")
+
+            # Evaluate Algo 3 (Macro Bearish Breakdown Short 1:2)
+            if ALGO3_TAG in held_by:
+                print(f"  [SKIP] {pair:<12} — Algo 3 (Short) position already open")
             else:
                 try:
-                    mrsig = analyze_mean_reversion(pair, d4, get_live_price(pair))
-                    if mrsig:
-                        mr_candidates.append(mrsig)
-                        print(f"  [MEAN-REV] {pair:<12} {mrsig['direction'].upper():<5} "
-                              f"entry={mrsig['entry']:,.4f} rr=1:{mrsig['rr_ratio']:.2f}")
+                    a3sig = analyze_algo3(pair, d4, d1, live_px)
+                    if a3sig:
+                        algo3_candidates.append(a3sig)
+                        print(f"  [ALGO 3] {pair:<12} {a3sig['direction'].upper():<5} "
+                              f"entry={a3sig['entry']:,.4f} rr=1:{a3sig['rr_ratio']:.2f}")
                 except Exception as exc:
-                    print(f"  [MEAN-REV ERR] {pair}: {exc}")
+                    print(f"  [ALGO 3 ERR] {pair}: {exc}")
 
         except requests.HTTPError as exc:
             msg = f"{pair}: API HTTP {exc.response.status_code} (all providers failed)"
@@ -657,39 +537,31 @@ def handler(event=None, context=None):
             print(f"\n  [ERR] {msg}")
             stats["errors"].append(msg)
 
-    # ── Pass 2: rank within each engine's own budget ─────────────────────────
-    # The engines don't compete for slots — each has MAX_SIGNALS_PER_ENGINE of
-    # its own, so neither engine's sample size depends on how active the
-    # other happens to be. Both are tagged in the `strategy` column so live
-    # results can settle which one actually earns its place.
+    # ── Pass 2: rank within each engine's own budget ──────────────────────────
     donchian_candidates.sort(key=lambda s: -s["_rank"])
-    mr_candidates.sort(key=lambda s: -s["_rank"])
+    algo2_candidates.sort(key=lambda s: -s["_rank"])
+    algo3_candidates.sort(key=lambda s: -s["_rank"])
 
-    new_take = donchian_candidates[:donchian_slots]
+    donchian_take = donchian_candidates[:donchian_slots]
+    used_pairs = {s["pair"] for s in donchian_take}
 
-    # Never open two positions on the same pair from different engines: if
-    # Donchian is taking a pair this run, mean_reversion stands down on it.
-    # Donchian wins the tie because it is the measurably better strategy by
-    # backtested PF (1.27 vs mean_reversion's 1.11 — see donchian.py /
-    # mean_reversion.py).
-    donchian_pairs = {s["pair"] for s in new_take}
-    mr_eligible = [s for s in mr_candidates if s["pair"] not in donchian_pairs]
-    mr_take = mr_eligible[:mr_slots]
+    algo2_eligible = [s for s in algo2_candidates if s["pair"] not in used_pairs]
+    algo2_take = algo2_eligible[:algo2_slots]
+    used_pairs.update(s["pair"] for s in algo2_take)
 
-    to_insert = [{"signal": s, "engine": DONCHIAN_TAG} for s in new_take] \
-        + [{"signal": s, "engine": MEAN_REVERSION_TAG} for s in mr_take]
-    overflow = mr_eligible[mr_slots:]
+    algo3_eligible = [s for s in algo3_candidates if s["pair"] not in used_pairs]
+    algo3_take = algo3_eligible[:algo3_slots]
 
-    print(f"\n  Engine mix: {len(new_take)}/{donchian_slots} donchian + "
-          f"{len(mr_take)}/{mr_slots} mean_reversion  "
-          f"[{len(donchian_candidates)} / {len(mr_candidates)} qualified]")
+    to_insert = (
+        [{"signal": s, "engine": DONCHIAN_TAG} for s in donchian_take]
+        + [{"signal": s, "engine": ALGO2_TAG} for s in algo2_take]
+        + [{"signal": s, "engine": ALGO3_TAG} for s in algo3_take]
+    )
 
-    if overflow:
-        print(f"\n{SEP}")
-        print(f"  Dropped (mean_reversion engine at its cap of {MAX_SIGNALS_PER_ENGINE}/day "
-              f"— {today_by_engine[MEAN_REVERSION_TAG]} already today):")
-        for s in overflow:
-            print(f"    {s['pair']:<12}  {s['direction'].upper():<5}  rr=1:{s['rr_ratio']:.2f}  — not inserted")
+    print(f"\n  Engine mix: {len(donchian_take)}/{donchian_slots} Algo1 + "
+          f"{len(algo2_take)}/{algo2_slots} Algo2 + "
+          f"{len(algo3_take)}/{algo3_slots} Algo3  "
+          f"[{len(donchian_candidates)} / {len(algo2_candidates)} / {len(algo3_candidates)} qualified]")
 
     # ── Pass 3: insert the winners ────────────────────────────────────────────
     if to_insert:
@@ -697,10 +569,10 @@ def handler(event=None, context=None):
         print(f"  Inserting top {len(to_insert)} signal(s)  (max={MAX_SIGNALS}):\n")
 
     for analysis in to_insert:
-        sig = dict(analysis["signal"])          # copy: we mutate before insert
+        sig = dict(analysis["signal"])
         engine = analysis.get("engine", DONCHIAN_TAG)
         sig["strategy"] = engine
-        sig.pop("_rank", None)                  # ranking helper, not a column
+        sig.pop("_rank", None)
         try:
             supabase.table("trade_signals").insert(sig).execute()
             print(f"  [DB OK]  {sig['pair']:<12}  {sig['direction'].upper():<5}  "
@@ -719,7 +591,7 @@ def handler(event=None, context=None):
                      [e.split(" ")[0] for e in stats["errors"]]]
     _send_push_notifications(supabase, inserted_sigs[:stats["inserted"]])
 
-    # ── Pass 5: upsert market sentiment ──────────────────────────────────────
+    # ── Pass 5: upsert market sentiment ───────────────────────────────────────
     try:
         _upsert_sentiment(supabase, breadth, fg_raw, fg_label)
     except Exception as exc:
@@ -728,8 +600,9 @@ def handler(event=None, context=None):
     print(f"\n{SEP}")
     print(f"[generate_signals] Done")
     print(f"  Inserted         : {stats['inserted']}  "
-          f"(donchian {stats.get('inserted_' + DONCHIAN_TAG, 0)}, "
-          f"mean_reversion {stats.get('inserted_' + MEAN_REVERSION_TAG, 0)}; "
+          f"(Algo1 {stats.get('inserted_' + DONCHIAN_TAG, 0)}, "
+          f"Algo2 {stats.get('inserted_' + ALGO2_TAG, 0)}, "
+          f"Algo3 {stats.get('inserted_' + ALGO3_TAG, 0)}; "
           f"cap {MAX_SIGNALS_PER_ENGINE}/engine, today total="
           f"{today_count + stats['inserted']})")
     print(f"  No signal        : {stats['no_signal']}")

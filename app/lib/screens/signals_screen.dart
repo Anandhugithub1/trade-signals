@@ -58,10 +58,11 @@ class _SignalsScreenState extends State<SignalsScreen> {
           (_resFilter == 'Active' && s.isPending) ||
           (_resFilter == 'Won' && s.isWin) ||
           (_resFilter == 'Lost' && s.isLoss);
-      // Two engines run side by side; this is how you compare them.
+      // Three engines run side by side
       final matchEngine = _engineFilter == 'All' ||
-          (_engineFilter == 'Breakout' && s.isDonchian) ||
-          (_engineFilter == 'Momentum' && !s.isDonchian);
+          (_engineFilter == 'Algo 1' && s.isAlgo1) ||
+          (_engineFilter == 'Algo 2' && s.isAlgo2) ||
+          (_engineFilter == 'Algo 3' && s.isAlgo3);
       return matchSearch && matchDir && matchRes && matchEngine;
     }).toList();
   }
@@ -187,8 +188,7 @@ class _SignalsScreenState extends State<SignalsScreen> {
             color: c.short,
             onTap: () => setState(() => _dirFilter = 'Short'),
           ),
-          // Divider between direction and engine filters — they are
-          // different axes and shouldn't read as one group.
+          // Divider between direction and engine filters
           Container(
             width: 1,
             height: 18,
@@ -196,19 +196,27 @@ class _SignalsScreenState extends State<SignalsScreen> {
             color: c.border,
           ),
           _FilterPill(
-            label: 'Breakout',
-            active: _engineFilter == 'Breakout',
+            label: 'Algo 1 (1:3)',
+            active: _engineFilter == 'Algo 1',
             color: c.long,
             onTap: () => setState(() => _engineFilter =
-                _engineFilter == 'Breakout' ? 'All' : 'Breakout'),
+                _engineFilter == 'Algo 1' ? 'All' : 'Algo 1'),
           ),
           const SizedBox(width: 7),
           _FilterPill(
-            label: 'Momentum',
-            active: _engineFilter == 'Momentum',
-            color: c.t2,
+            label: 'Algo 2 (1:2)',
+            active: _engineFilter == 'Algo 2',
+            color: c.accent,
             onTap: () => setState(() => _engineFilter =
-                _engineFilter == 'Momentum' ? 'All' : 'Momentum'),
+                _engineFilter == 'Algo 2' ? 'All' : 'Algo 2'),
+          ),
+          const SizedBox(width: 7),
+          _FilterPill(
+            label: 'Algo 3 (1:2)',
+            active: _engineFilter == 'Algo 3',
+            color: c.gold,
+            onTap: () => setState(() => _engineFilter =
+                _engineFilter == 'Algo 3' ? 'All' : 'Algo 3'),
           ),
         ],
       ),

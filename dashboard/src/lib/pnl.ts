@@ -3,7 +3,7 @@ import type { TradeSignal } from '@/types/signal'
 /**
  * Realized P&L, computed from what each trade ACTUALLY did (entry → close
  * price), never from an assumed TP/SL %. The two live engines have very
- * different profit:loss shapes — donchian targets 3R, mean_reversion ~1R —
+ * different profit:loss shapes — Algo 1 targets 3R, Algo 2 & 3 target 2R —
  * and every signal sets its own stop distance, so any single fixed % (the
  * old "+3.5% win / −2% loss") is wrong for both. Same formula the backend's
  * monthly_summary uses for crypto.
@@ -12,8 +12,9 @@ import type { TradeSignal } from '@/types/signal'
 export const TRADE_SIZE = 1000 // illustrative position size, $ per trade
 
 export const ENGINES = [
-  { key: 'donchian', label: 'Donchian', color: '#22c55e' },
-  { key: 'mean_reversion', label: 'Mean Reversion', color: '#6366f1' },
+  { key: 'donchian', label: 'Algo 1 (1:3 Breakout)', color: '#22c55e' },
+  { key: 'algo2', label: 'Algo 2 (1:2 Bull Momentum)', color: '#3b82f6' },
+  { key: 'algo3', label: 'Algo 3 (1:2 Macro Short)', color: '#f59e0b' },
 ] as const
 
 /**

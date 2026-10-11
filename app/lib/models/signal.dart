@@ -61,30 +61,36 @@ class TradeSignal {
   }
 
   // ---- Engine helpers ----
-  bool get isDonchian => strategy == 'donchian';
+  bool get isAlgo1 => strategy == 'donchian' || strategy == 'algo1';
+  bool get isAlgo2 => strategy == 'algo2';
+  bool get isAlgo3 => strategy == 'algo3';
+  bool get isDonchian => isAlgo1;
   bool get isMeanReversion => strategy == 'mean_reversion';
-  bool get isRetiredEngine => !isDonchian && !isMeanReversion;
+  bool get isRetiredEngine => !isAlgo1 && !isAlgo2 && !isAlgo3 && !isMeanReversion;
 
-  /// Badge text for the feed card. Short enough to survive a crowded header
-  /// row (pair + PERP chip + direction + result) on a narrow phone, but still
-  /// a real word rather than a cryptic code.
+  /// Badge text for the feed card.
   String get strategyLabel {
-    if (isDonchian) return 'BREAK';
+    if (isAlgo1) return 'ALGO 1';
+    if (isAlgo2) return 'ALGO 2';
+    if (isAlgo3) return 'ALGO 3';
     if (isMeanReversion) return 'REVERT';
     return 'RETIRED';
   }
 
-  /// Unambiguous name for the detail screen, where the question being
-  /// answered is literally "which algorithm produced this signal".
+  /// Unambiguous name for the detail screen.
   String get strategyFullName {
-    if (isDonchian) return 'BREAKOUT';
-    if (isMeanReversion) return 'MEAN REVERSION';
+    if (isAlgo1) return 'ALGO 1 (DONCHIAN 1:3)';
+    if (isAlgo2) return 'ALGO 2 (BULL MOMENTUM 1:2)';
+    if (isAlgo3) return 'ALGO 3 (MACRO SHORT 1:2)';
+    if (isMeanReversion) return 'MEAN REVERSION (1:1)';
     return 'RETIRED ENGINE';
   }
 
   /// One-line explanation of what the engine looks for.
   String get strategyNote {
-    if (isDonchian) return '55-bar channel breakout on 4h bars, 3R target';
+    if (isAlgo1) return '55-bar channel breakout on 4h bars, 1:3 R:R target';
+    if (isAlgo2) return '1h Macro Bull Momentum, Price > EMA200 & EMA50, 1:2 R:R (+10% / -5%)';
+    if (isAlgo3) return '4h Bearish Macro Breakdown Short, Price < EMA200 & EMA50, 1:2 R:R (+10% / -5%)';
     if (isMeanReversion) {
       return 'RSI + Bollinger Band range-fade on 4h bars, ~1:1 target';
     }

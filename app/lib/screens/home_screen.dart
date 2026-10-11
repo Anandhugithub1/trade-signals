@@ -622,10 +622,11 @@ class _EngineComparisonCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final donchian = SignalStats.forStrategy(signals, 'donchian');
-    final meanRev = SignalStats.forStrategy(signals, 'mean_reversion');
+    final algo1 = SignalStats.forStrategy(signals, 'donchian');
+    final algo2 = SignalStats.forStrategy(signals, 'algo2');
+    final algo3 = SignalStats.forStrategy(signals, 'algo3');
 
-    if (donchian.total == 0 && meanRev.total == 0) {
+    if (algo1.total == 0 && algo2.total == 0 && algo3.total == 0) {
       return const SizedBox.shrink();
     }
 
@@ -654,22 +655,35 @@ class _EngineComparisonCard extends StatelessWidget {
             children: [
               Expanded(
                 child: _EngineStatBlock(
-                  label: 'Donchian',
+                  label: 'Algo 1 (1:3)',
                   color: c.long,
-                  stats: donchian,
+                  stats: algo1,
                 ),
               ),
               Container(
                 width: 1,
                 height: 74,
                 color: c.border,
-                margin: const EdgeInsets.symmetric(horizontal: 14),
+                margin: const EdgeInsets.symmetric(horizontal: 8),
               ),
               Expanded(
                 child: _EngineStatBlock(
-                  label: 'Mean Reversion',
+                  label: 'Algo 2 (1:2)',
                   color: c.accent,
-                  stats: meanRev,
+                  stats: algo2,
+                ),
+              ),
+              Container(
+                width: 1,
+                height: 74,
+                color: c.border,
+                margin: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+              Expanded(
+                child: _EngineStatBlock(
+                  label: 'Algo 3 (1:2)',
+                  color: c.gold,
+                  stats: algo3,
                 ),
               ),
             ],

@@ -3,7 +3,7 @@ export type SignalResult = 'pending' | 'win' | 'loss' | 'expired'
 // 'donchian' and 'mean_reversion' are the two live engines; 'legacy' is
 // retired (its history was deleted from trade_signals) but the type stays
 // permissive in case older cached data or a stray row still carries it.
-export type SignalStrategy = 'donchian' | 'mean_reversion' | 'legacy' | string
+export type SignalStrategy = 'donchian' | 'algo2' | 'algo3' | 'mean_reversion' | 'legacy' | string
 
 export interface TradeSignal {
   id: string

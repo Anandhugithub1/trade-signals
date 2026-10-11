@@ -35,7 +35,7 @@ const Tip = memo(({ active, payload, label }: any) => {
           <span className="ml-auto font-bold text-white pl-4">
             {p.name === 'P&L'
               ? `${p.value >= 0 ? '+' : '−'}$${Math.abs(p.value)}`
-              : p.name === 'donchian' || p.name === 'mean_reversion'
+              : ['donchian', 'algo2', 'algo3', 'mean_reversion'].includes(p.name)
               ? `${p.value >= 0 ? '+' : ''}${p.value}R`
               : `${p.value}${['Win Rate','Precision','Bullish','Neutral','Bearish'].includes(p.name) ? '%' : ''}`}
           </span>
@@ -251,7 +251,8 @@ export default function Analytics() {
       return {
         date: new Date(pt.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
         donchian: last['donchian'] ?? null,
-        mean_reversion: last['mean_reversion'] ?? null,
+        algo2: last['algo2'] ?? null,
+        algo3: last['algo3'] ?? null,
       }
     })
   }, [signals])
@@ -351,11 +352,11 @@ export default function Analytics() {
         {/* ── Engine comparison ── */}
         <Section
           title="Engine Comparison"
-          sub="donchian (trend breakout) vs mean_reversion (range-fade) — win rate, profit factor, and realized R-multiple per trade, computed from actual entry/stop/target/close, not a fixed % assumption."
+          sub="Algo 1 (1:3 breakout) vs Algo 2 (1:2 bull momentum) vs Algo 3 (1:2 macro short) — win rate, profit factor, and realized R-multiple per trade, computed from actual entry/stop/target/close."
         >
           {!mounted ? <Skel h={280} /> : (
             <div className="space-y-6">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 {engineStats.map(e => {
                   const wrC = e.winRate >= 50 ? '#22c55e' : e.winRate >= 35 ? '#f59e0b' : '#ef4444'
                   const pfC = e.pf >= 1.2 ? '#22c55e' : e.pf >= 1 ? '#f59e0b' : '#ef4444'
@@ -399,9 +400,13 @@ export default function Analytics() {
                     <YAxis tick={{ fill: '#8b949e', fontSize: 10 }} tickFormatter={v => `${v}R`} width={40} axisLine={false} tickLine={false} />
                     <ReferenceLine y={0} stroke="#30363d" strokeDasharray="4 4" />
                     <Tooltip content={<Tip />} />
-                    <Legend wrapperStyle={{ fontSize: 11, color: '#8b949e' }} formatter={(v: string) => v === 'donchian' ? 'Donchian' : 'Mean Reversion'} />
+                    <Legend wrapperStyle={{ fontSize: 11, color: '#8b949e' }} formatter={(v: string) => {
+                      const found = ENGINES.find(e => e.key === v)
+                      return found ? found.label : v
+                    }} />
                     <Line type="monotone" dataKey="donchian" stroke="#22c55e" strokeWidth={2.5} dot={false} connectNulls />
-                    <Line type="monotone" dataKey="mean_reversion" stroke="#6366f1" strokeWidth={2.5} dot={false} connectNulls />
+                    <Line type="monotone" dataKey="algo2" stroke="#3b82f6" strokeWidth={2.5} dot={false} connectNulls />
+                    <Line type="monotone" dataKey="algo3" stroke="#f59e0b" strokeWidth={2.5} dot={false} connectNulls />
                   </LineChart>
                 </ResponsiveContainer>
               )}
