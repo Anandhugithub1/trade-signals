@@ -12,7 +12,6 @@ import 'screens/auth/register_screen.dart';
 import 'screens/disclaimer_screen.dart';
 import 'screens/home_screen.dart';
 import 'screens/signals_screen.dart';
-import 'screens/crypto_options_screen.dart';
 import 'screens/new_listing_shorts_screen.dart';
 import 'screens/profile_screen.dart';
 
@@ -73,7 +72,6 @@ class _MainShellState extends State<MainShell> {
   static const _screens = [
     HomeScreen(),
     SignalsScreen(),
-    CryptoOptionsScreen(),
     NewListingShortsScreen(),
     ProfileScreen(),
   ];
@@ -112,12 +110,6 @@ class _MainShellState extends State<MainShell> {
               icon: Icon(Icons.bolt_outlined, color: c.t3),
               selectedIcon: Icon(Icons.bolt_rounded, color: c.accent),
               label: 'Signals',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.candlestick_chart_outlined, color: c.t3),
-              selectedIcon:
-                  Icon(Icons.candlestick_chart_rounded, color: c.accent),
-              label: 'Options',
             ),
             NavigationDestination(
               icon: Icon(Icons.trending_down_outlined, color: c.t3),
