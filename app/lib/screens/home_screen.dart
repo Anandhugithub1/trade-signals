@@ -664,7 +664,7 @@ class _EngineComparisonCard extends StatelessWidget {
                 width: 1,
                 height: 74,
                 color: c.border,
-                margin: const EdgeInsets.symmetric(horizontal: 8),
+                margin: const EdgeInsets.symmetric(horizontal: 5),
               ),
               Expanded(
                 child: _EngineStatBlock(
@@ -677,7 +677,7 @@ class _EngineComparisonCard extends StatelessWidget {
                 width: 1,
                 height: 74,
                 color: c.border,
-                margin: const EdgeInsets.symmetric(horizontal: 8),
+                margin: const EdgeInsets.symmetric(horizontal: 5),
               ),
               Expanded(
                 child: _EngineStatBlock(
@@ -723,22 +723,26 @@ class _EngineStatBlock extends StatelessWidget {
         Row(
           children: [
             Container(
-              width: 8,
-              height: 8,
+              width: 7,
+              height: 7,
               decoration: BoxDecoration(color: color, shape: BoxShape.circle),
             ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(color: c.t1, fontSize: 13, fontWeight: FontWeight.w700),
+            const SizedBox(width: 5),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: c.t1,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
           ],
         ),
         const SizedBox(height: 8),
-        // Headline: realized profit (R) — this is what actually says whether
-        // the engine makes money. Win rate alone is misleading for
-        // asymmetric R:R strategies (e.g. a 35-40% win rate can still be
-        // strongly profitable), so it's demoted to the smaller line below.
         Row(
           children: [
             Text(
@@ -754,13 +758,14 @@ class _EngineStatBlock extends StatelessWidget {
             Text('total', style: TextStyle(color: c.t3, fontSize: 11)),
           ],
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
         Text(
-          '${stats.wins}W / ${stats.losses}L  ·  PF $pfLabel',
-          style: TextStyle(color: c.t2, fontSize: 11),
+          '${stats.wins}W / ${stats.losses}L',
+          style: TextStyle(color: c.t2, fontSize: 11, fontWeight: FontWeight.w600),
         ),
+        const SizedBox(height: 2),
         Text(
-          '$wrLabel win rate',
+          'PF $pfLabel · $wrLabel win',
           style: TextStyle(color: c.t3, fontSize: 11),
         ),
       ],

@@ -57,7 +57,8 @@ class _SignalsScreenState extends State<SignalsScreen> {
       final matchRes = _resFilter == 'All' ||
           (_resFilter == 'Active' && s.isPending) ||
           (_resFilter == 'Won' && s.isWin) ||
-          (_resFilter == 'Lost' && s.isLoss);
+          (_resFilter == 'Lost' && s.isLoss) ||
+          (_resFilter == 'Expired' && s.isExpired);
       // Three engines run side by side
       final matchEngine = _engineFilter == 'All' ||
           (_engineFilter == 'Algo 1' && s.isAlgo1) ||
@@ -253,6 +254,13 @@ class _SignalsScreenState extends State<SignalsScreen> {
           active: _resFilter == 'Lost',
           color: c.short,
           onTap: () => setState(() => _resFilter = 'Lost'),
+        ),
+        const SizedBox(width: 7),
+        _FilterPill(
+          label: 'Expired ${stats.expired}',
+          active: _resFilter == 'Expired',
+          color: c.t2,
+          onTap: () => setState(() => _resFilter = 'Expired'),
         ),
       ],
     );

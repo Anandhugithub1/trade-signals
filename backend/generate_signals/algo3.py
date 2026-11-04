@@ -13,7 +13,7 @@ STRATEGY
               - Take Profit: +10.0% gain (+2R) [price falls 10%]
               - Stop Loss:   -5.0% loss (-1R) [price rises 5%]
               - Breakeven win rate is only 33.3%, yielding substantial edge over fees.
-  Hold:       Up to 72 hours (3 days).
+  Hold:       Up to 120 hours (5 days max hold validity).
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import numpy as np
 TP_PCT = 0.100    # +10.0% Take Profit (+2R)
 SL_PCT = 0.050    # -5.0% Stop Loss (-1R)
 RR_RATIO = 2.0    # 1:2 Reward:Risk
-MAX_HOLD_HOURS = 72
+MAX_HOLD_HOURS = 120  # 5 days (30 x 4h bars)
 STRATEGY_TAG = "algo3"
 
 
@@ -121,6 +121,6 @@ def analyze_algo3(pair: str, candles_4h: list, candles_1h: list | None = None,
         "strategy": STRATEGY_TAG,
         "note": (f"Algo 3: Bearish Macro Breakdown Short (1:2). Price < EMA200 & EMA50, "
                  f"20-period breakdown, RSI(14)={rsi_4h:.1f}. "
-                 f"Target +10.0% (+2R), Stop -5.0% (-1R)."),
+                 f"Target +10.0% (+2R), Stop -5.0% (-1R). 5d max hold."),
         "_rank": float(rank_score),
     }

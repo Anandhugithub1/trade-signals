@@ -7,25 +7,27 @@ import { ENGINES, TRADE_SIZE, summarize, fmtUsd, fmtPct, fmtR, fmtRatio, fmtPf }
 function computeStats(signals: TradeSignal[]) {
   const wins = signals.filter((s) => s.result === 'win').length
   const losses = signals.filter((s) => s.result === 'loss').length
+  const expired = signals.filter((s) => s.result === 'expired').length
   const pending = signals.filter((s) => s.result === 'pending').length
   const closed = wins + losses
   const winRate = closed ? (wins / closed) * 100 : 0
   const avgConf = signals.length
     ? signals.reduce((a, s) => a + s.confidence, 0) / signals.length
     : 0
-  return { total: signals.length, wins, losses, pending, winRate, avgConf }
+  return { total: signals.length, wins, losses, expired, pending, winRate, avgConf }
 }
 
 function pairStats(signals: TradeSignal[]) {
-  const map: Record<string, { wins: number; losses: number; pending: number }> = {}
+  const map: Record<string, { wins: number; losses: number; expired: number; pending: number }> = {}
   signals.forEach((s) => {
-    if (!map[s.pair]) map[s.pair] = { wins: 0, losses: 0, pending: 0 }
+    if (!map[s.pair]) map[s.pair] = { wins: 0, losses: 0, expired: 0, pending: 0 }
     if (s.result === 'win') map[s.pair].wins++
     else if (s.result === 'loss') map[s.pair].losses++
+    else if (s.result === 'expired') map[s.pair].expired++
     else map[s.pair].pending++
   })
   return Object.entries(map)
-    .map(([pair, v]) => ({ pair, ...v, total: v.wins + v.losses + v.pending }))
+    .map(([pair, v]) => ({ pair, ...v, total: v.wins + v.losses + v.expired + v.pending }))
     .sort((a, b) => b.total - a.total)
 }
 
@@ -251,7 +253,7 @@ export default function DashboardPage() {
                         day: 'numeric',
                       })}
                     </span>
-                    <ResultBadge result={s.result} />
+                    <ResultBadge result={s.result} signal={s} />
                   </div>
                 </div>
               ))}
@@ -304,12 +306,37 @@ function Metric({ label, value, sub, color }: { label: string; value: string; su
   )
 }
 
-function ResultBadge({ result }: { result: string }) {
+function ResultBadge({ result, signal }: { result: string; signal?: TradeSignal }) {
   const styles: Record<string, string> = {
     win: 'bg-[#22c55e]/10 text-[#22c55e] border-[#22c55e]/20',
     loss: 'bg-[#ef4444]/10 text-[#ef4444] border-[#ef4444]/20',
     pending: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+    expired: 'bg-slate-500/10 text-slate-400 border-slate-500/20',
   }
+
+  if (result === 'expired') {
+    if (signal && signal.entry_confirmed && signal.close_price != null) {
+      const pnl = ((signal.close_price - signal.entry) / signal.entry) * 100 * (signal.direction === 'short' ? -1 : 1)
+      const isPos = pnl >= 0
+      return (
+        <span
+          className={`text-[10px] font-bold tracking-wider px-2 py-0.5 rounded border ${
+            isPos
+              ? 'bg-[#22c55e]/10 text-[#22c55e] border-[#22c55e]/20'
+              : 'bg-[#ef4444]/10 text-[#ef4444] border-[#ef4444]/20'
+          }`}
+        >
+          EXP {isPos ? '+' : ''}{pnl.toFixed(1)}%
+        </span>
+      )
+    }
+    return (
+      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border bg-slate-500/10 text-slate-400 border-slate-500/20">
+        EXPIRED
+      </span>
+    )
+  }
+
   return (
     <span
       className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${styles[result] ?? styles.pending}`}

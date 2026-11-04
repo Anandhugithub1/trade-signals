@@ -233,7 +233,7 @@ class _FullBody extends StatelessWidget {
   }
 }
 
-// Shows WIN/LOSS badge for closed signals, an ACTIVE badge for pending.
+// Shows WIN/LOSS/EXPIRED badge for closed signals, WAITING/ACTIVE badge for pending.
 class _ResultOrConfidence extends StatelessWidget {
   final TradeSignal signal;
 
@@ -247,6 +247,22 @@ class _ResultOrConfidence extends StatelessWidget {
     }
     if (signal.isLoss) {
       return _ResultBadge(label: 'LOSS', icon: Icons.close_rounded, color: c.short);
+    }
+    if (signal.isExpired) {
+      if (!signal.entryConfirmed) {
+        return _ResultBadge(label: 'EXPIRED', icon: Icons.timer_off_outlined, color: c.t3);
+      }
+      final pnl = signal.pnlPercent;
+      if (pnl != null) {
+        final isPos = pnl >= 0;
+        final sign = isPos ? '+' : '';
+        return _ResultBadge(
+          label: 'EXP $sign${pnl.toStringAsFixed(1)}%',
+          icon: isPos ? Icons.trending_up_rounded : Icons.trending_down_rounded,
+          color: isPos ? c.long : c.short,
+        );
+      }
+      return _ResultBadge(label: 'EXPIRED', icon: Icons.timer_off_outlined, color: c.t3);
     }
     // Pending — distinguish "limit order waiting to fill" from "filled, active".
     if (!signal.entryConfirmed) {
@@ -390,16 +406,27 @@ class _PnlRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    if (signal.isExpired && !signal.entryConfirmed) {
+      return Row(
+        children: [
+          Icon(Icons.timer_off_outlined, color: c.t3, size: 12),
+          const SizedBox(width: 3),
+          Text('Expired · Entry limit not reached (unfilled)',
+              style: TextStyle(color: c.t3, fontSize: 11, fontWeight: FontWeight.w600)),
+        ],
+      );
+    }
     final pnl = signal.pnlPercent;
-    if (pnl == null) return const SizedBox.shrink();
+    if (pnl == null || signal.closePrice == null) return const SizedBox.shrink();
     final isPos = pnl >= 0;
     final color = isPos ? c.long : c.short;
+    final prefix = signal.isExpired ? 'Expired at ' : 'Closed at ';
     return Row(
       children: [
         Icon(isPos ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
             color: color, size: 12),
         const SizedBox(width: 3),
-        Text('${pnl.abs().toStringAsFixed(2)}% P&L  ·  Closed at ${fmtPrice(signal.closePrice!)}',
+        Text('${pnl.abs().toStringAsFixed(2)}% P&L  ·  $prefix${fmtPrice(signal.closePrice!)}',
             style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600)),
       ],
     );

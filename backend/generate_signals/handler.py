@@ -3,7 +3,7 @@ generate_signals — creates trade signals for top crypto pairs by market cap.
 
 Three robust algorithmic engines run side by side:
   1. Algo 1 (donchian.py) — 55-bar channel breakout, 4h bars, 1:3 R:R target.
-  2. Algo 2 (algo2.py)    — 1h Macro Bull Momentum, 1:2 R:R target (+10% / -5%), LONG only.
+  2. Algo 2 (algo2.py)    — 4h Sideways Regime Range, 1:2 R:R target (+8% / -4%), Long & Short.
   3. Algo 3 (algo3.py)    — 4h Bearish Macro Breakdown Short, 1:2 R:R target (+10% / -5%), SHORT only.
 
 Replaces the old 1:1 mean reversion engine with 1:2 Algo 2 and Algo 3.
@@ -86,7 +86,7 @@ TOP_PAIRS = [
 
 # ── Engine tags (written to the `strategy` column) ───────────────────────────
 DONCHIAN_TAG = "donchian"  # Algo 1: 1:3 Breakout
-ALGO2_TAG    = "algo2"     # Algo 2: 1:2 Macro Bull Momentum (Long)
+ALGO2_TAG    = "algo2"     # Algo 2: 1:2 Sideways Regime Range (4h)
 ALGO3_TAG    = "algo3"     # Algo 3: 1:2 Bearish Macro Breakdown (Short)
 LEGACY_TAG   = "legacy"
 
@@ -417,7 +417,7 @@ def handler(event=None, context=None):
 
     print(f"[generate_signals] Signals today: {today_count} / {MAX_SIGNALS}  "
           f"(Algo1-Donchian: {today_by_engine[DONCHIAN_TAG]}/{MAX_SIGNALS_PER_ENGINE}, "
-          f"Algo2-BullMom: {today_by_engine[ALGO2_TAG]}/{MAX_SIGNALS_PER_ENGINE}, "
+          f"Algo2-Sideways: {today_by_engine[ALGO2_TAG]}/{MAX_SIGNALS_PER_ENGINE}, "
           f"Algo3-Short: {today_by_engine[ALGO3_TAG]}/{MAX_SIGNALS_PER_ENGINE})")
 
     if slots_left == 0:

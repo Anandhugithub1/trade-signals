@@ -80,7 +80,7 @@ class TradeSignal {
   /// Unambiguous name for the detail screen.
   String get strategyFullName {
     if (isAlgo1) return 'ALGO 1 (DONCHIAN 1:3)';
-    if (isAlgo2) return 'ALGO 2 (BULL MOMENTUM 1:2)';
+    if (isAlgo2) return 'ALGO 2 (SIDEWAYS RANGE 1:2)';
     if (isAlgo3) return 'ALGO 3 (MACRO SHORT 1:2)';
     if (isMeanReversion) return 'MEAN REVERSION (1:1)';
     return 'RETIRED ENGINE';
@@ -88,9 +88,9 @@ class TradeSignal {
 
   /// One-line explanation of what the engine looks for.
   String get strategyNote {
-    if (isAlgo1) return '55-bar channel breakout on 4h bars, 1:3 R:R target';
-    if (isAlgo2) return '1h Macro Bull Momentum, Price > EMA200 & EMA50, 1:2 R:R (+10% / -5%)';
-    if (isAlgo3) return '4h Bearish Macro Breakdown Short, Price < EMA200 & EMA50, 1:2 R:R (+10% / -5%)';
+    if (isAlgo1) return '55-bar channel breakout on 4h bars, 1:3 R:R target (10d max hold)';
+    if (isAlgo2) return '4h Sideways Regime Range, ADX < 24 + Bollinger Reversion, 1:2 R:R (+8% / -4%, 6d max hold)';
+    if (isAlgo3) return '4h Bearish Macro Breakdown Short, Price < EMA200 & EMA50, 1:2 R:R (+10% / -5%, 5d max hold)';
     if (isMeanReversion) {
       return 'RSI + Bollinger Band range-fade on 4h bars, ~1:1 target';
     }
@@ -109,6 +109,7 @@ class TradeSignal {
   bool get isPending => result == SignalResult.pending;
   bool get isWin => result == SignalResult.win;
   bool get isLoss => result == SignalResult.loss;
+  bool get isExpired => result == SignalResult.expired;
 
   // Expiry helpers
   bool get hasExpiry => expiresAt != null;
@@ -153,8 +154,10 @@ class TradeSignal {
   }
 
   // Profit/loss % vs entry when closed
+  // Only valid if the order was filled and there is a recorded closePrice.
+  // Expired unfilled orders do NOT carry profit or loss.
   double? get pnlPercent {
-    if (closePrice == null) return null;
+    if (!entryConfirmed || closePrice == null) return null;
     final diff = closePrice! - entry;
     final directedDiff = direction == SignalDirection.long ? diff : -diff;
     return (directedDiff / entry) * 100;
@@ -191,19 +194,18 @@ class SignalStats {
   final int total;
   final int wins;
   final int losses;
+  final int expired;
   final int pending;
   // Realized R across closed signals: win = take-profit distance / stop
   // distance (the actual reward realized, not a fixed target), loss = -1R
-  // by construction (the stop, by definition, is exactly 1R away). Not
-  // computed for pending/expired rows. Used for per-engine comparison,
-  // since donchian's 3R target and mean_reversion's ~1:1 target aren't
-  // comparable on win rate alone.
+  // by construction (the stop, by definition, is exactly 1R away).
   final double totalR;
 
   const SignalStats({
     required this.total,
     required this.wins,
     required this.losses,
+    this.expired = 0,
     required this.pending,
     this.totalR = 0,
   });
@@ -212,6 +214,7 @@ class SignalStats {
     final closed = signals.where((s) => !s.isPending).toList();
     final w = closed.where((s) => s.isWin).length;
     final l = closed.where((s) => s.isLoss).length;
+    final exp = signals.where((s) => s.isExpired).length;
     double totalR = 0;
     for (final s in closed) {
       final risk = (s.entry - s.stopLoss).abs();
@@ -219,13 +222,18 @@ class SignalStats {
       if (s.isWin) {
         totalR += (s.takeProfit - s.entry).abs() / risk;
       } else if (s.isLoss) {
-        totalR -= 1;
+        totalR -= 1.0;
+      } else if (s.isExpired && s.entryConfirmed && s.closePrice != null) {
+        final diff = s.closePrice! - s.entry;
+        final directedDiff = s.direction == SignalDirection.long ? diff : -diff;
+        totalR += directedDiff / risk;
       }
     }
     return SignalStats(
       total: signals.length,
       wins: w,
       losses: l,
+      expired: exp,
       pending: signals.where((s) => s.isPending).length,
       totalR: totalR,
     );

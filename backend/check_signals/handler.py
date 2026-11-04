@@ -258,14 +258,21 @@ def evaluate_signal(signal: dict, candles: list, signal_ms: int) -> tuple:
     # ── Expiry check ──────────────────────────────────────────────────────────
     # Prefer the signal's own expires_at (set at creation time, 2–7 days).
     # Fall back to the flat SIGNAL_EXPIRY_DAYS for older signals without it.
+    is_expired = False
     expires_at_str = signal.get("expires_at")
     if expires_at_str:
         if now_ms() >= iso_to_ms(expires_at_str):
-            return "expired", None, diag
+            is_expired = True
     else:
         age_days = (now_ms() - signal_ms) / 86_400_000
         if age_days >= SIGNAL_EXPIRY_DAYS:
-            return "expired", None, diag
+            is_expired = True
+
+    if is_expired:
+        # If the order was filled, position closes at the last close price upon expiry.
+        # If the order was never filled (unfilled limit order), close_price is None (no position).
+        close_price = diag.get("last_close") if diag["entry_confirmed"] else None
+        return "expired", close_price, diag
 
     return None, None, diag
 
@@ -324,7 +331,14 @@ def log_result(result, close_price, diag: dict, direction: str) -> None:
         print(f"    Candle H={diag['result_candle_h']:,.4f}  L={diag['result_candle_l']:,.4f}")
 
     elif result == "expired":
-        print(f"  RESULT           : EXPIRED  (no breach in {SIGNAL_EXPIRY_DAYS} days)")
+        if diag["entry_confirmed"] and close_price is not None:
+            entry_p = float(signal.get("entry_price") or signal.get("entry", 0))
+            diff = close_price - entry_p if entry_p > 0 else 0
+            directed = diff if direction == "long" else -diff
+            pnl_pct = (directed / entry_p * 100) if entry_p > 0 else 0
+            print(f"  RESULT           : EXPIRED (CLOSED @ {close_price:,.4f}, {pnl_pct:+.2f}% P&L)")
+        else:
+            print(f"  RESULT           : EXPIRED (UNFILLED — entry never reached)")
 
     else:  # still pending
         lc  = diag["last_close"]
@@ -366,7 +380,7 @@ def _notify_signal_result(supabase, signal: dict, result: str, close_price: floa
     WIN  → "BTCUSDT LONG  ✓ Take Profit hit — +1.92%"
     LOSS → "BTCUSDT LONG  ✗ Stop Loss hit  — -2.00%"
     """
-    if result not in ("win", "loss"):
+    if result not in ("win", "loss", "expired"):
         return
 
     fcm = _fcm_token()
@@ -400,9 +414,16 @@ def _notify_signal_result(supabase, signal: dict, result: str, close_price: floa
     if result == "win":
         title = f"{pair} {direction} — Take Profit Hit"
         body  = f"TP reached at ${close_price:,.4f}{pnl_str}"
-    else:
+    elif result == "loss":
         title = f"{pair} {direction} — Stop Loss Hit"
         body  = f"SL triggered at ${close_price:,.4f}{pnl_str}"
+    elif result == "expired":
+        if close_price and entry:
+            title = f"{pair} {direction} — Expired & Closed"
+            body  = f"Closed at ${close_price:,.4f}{pnl_str}"
+        else:
+            title = f"{pair} {direction} — Expired (Unfilled)"
+            body  = "Limit order was not filled before expiry"
 
     url     = f"https://fcm.googleapis.com/v1/projects/{project_id}/messages:send"
     headers = {"Authorization": f"Bearer {bearer}", "Content-Type": "application/json"}
@@ -484,7 +505,7 @@ def handler(event=None, context=None):
                 )
 
             if result:
-                update_payload = {"result": result}
+                update_payload = {"result": result, "entry_confirmed": diag.get("entry_confirmed", False)}
                 if close_price is not None:
                     update_payload["close_price"] = close_price
                 _retry(

@@ -112,9 +112,93 @@ class _ResultBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final isWin = signal.isWin;
+    final isExpired = signal.isExpired;
+    final pnl = signal.pnlPercent;
+
+    if (isExpired) {
+      if (!signal.entryConfirmed) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: c.t3.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: c.t3.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.timer_off_outlined, color: c.t3, size: 28),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Signal Expired (Unfilled)',
+                        style: TextStyle(
+                            color: c.t1, fontSize: 14, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Price never reached entry level within hold duration. No position was opened.',
+                      style: TextStyle(color: c.t2, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      } else {
+        final isPos = (pnl ?? 0) >= 0;
+        final color = isPos ? c.long : c.short;
+        final icon = isPos ? Icons.trending_up_rounded : Icons.trending_down_rounded;
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: color.withValues(alpha: 0.3)),
+          ),
+          child: Row(
+            children: [
+              Icon(icon, color: color, size: 28),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Signal Expired & Closed',
+                        style: TextStyle(
+                            color: color, fontSize: 14, fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 2),
+                    if (signal.closePrice != null)
+                      Text(
+                        'Closed at ${fmtPrice(signal.closePrice!)} on max hold duration',
+                        style: TextStyle(color: c.t2, fontSize: 12),
+                      ),
+                  ],
+                ),
+              ),
+              if (pnl != null)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '${isPos ? '+' : ''}${pnl.toStringAsFixed(2)}%',
+                      style: TextStyle(
+                          color: color, fontSize: 20, fontWeight: FontWeight.w900),
+                    ),
+                    Text('P&L',
+                        style: TextStyle(
+                            color: c.t3, fontSize: 11, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+            ],
+          ),
+        );
+      }
+    }
+
     final color = isWin ? c.long : c.short;
     final icon = isWin ? Icons.check_circle_rounded : Icons.cancel_rounded;
-    final pnl = signal.pnlPercent;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -148,11 +232,13 @@ class _ResultBanner extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  '${pnl >= 0 ? '+' : ''}${pnl.toStringAsFixed(2)}%',
+                  '${isWin ? '+' : ''}${pnl.toStringAsFixed(2)}%',
                   style: TextStyle(
                       color: color, fontSize: 20, fontWeight: FontWeight.w900),
                 ),
-                Text('P&L', style: TextStyle(color: c.t3, fontSize: 11)),
+                Text('P&L',
+                    style: TextStyle(
+                        color: c.t3, fontSize: 11, fontWeight: FontWeight.w600)),
               ],
             ),
         ],
@@ -200,7 +286,7 @@ class _PriceLevelsCard extends StatelessWidget {
             _PriceRow(
               label: 'Closed At',
               value: fmtPrice(signal.closePrice!),
-              color: signal.isWin ? c.long : c.short,
+              color: signal.isWin ? c.long : (signal.isLoss ? c.short : c.t1),
             ),
             Divider(height: 1, color: c.border),
           ],
@@ -490,6 +576,57 @@ class _ResultBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
+    if (signal.isExpired) {
+      if (!signal.entryConfirmed) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+          decoration: BoxDecoration(
+            color: c.t3.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: c.t3.withValues(alpha: 0.35)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.timer_off_outlined, color: c.t3, size: 11),
+              const SizedBox(width: 3),
+              Text('EXPIRED',
+                  style: TextStyle(
+                      color: c.t3,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.5)),
+            ],
+          ),
+        );
+      }
+      final pnl = signal.pnlPercent;
+      final isPos = (pnl ?? 0) >= 0;
+      final color = isPos ? c.long : c.short;
+      final sign = isPos ? '+' : '';
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: color.withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(isPos ? Icons.trending_up_rounded : Icons.trending_down_rounded, color: color, size: 11),
+            const SizedBox(width: 3),
+            Text(pnl != null ? 'EXP $sign${pnl.toStringAsFixed(1)}%' : 'EXPIRED',
+                style: TextStyle(
+                    color: color,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5)),
+          ],
+        ),
+      );
+    }
+
     final color = signal.isWin ? c.long : c.short;
     final icon = signal.isWin ? Icons.check_rounded : Icons.close_rounded;
     final label = signal.isWin ? 'WIN' : 'LOSS';

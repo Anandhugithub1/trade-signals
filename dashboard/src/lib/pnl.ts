@@ -13,8 +13,8 @@ export const TRADE_SIZE = 1000 // illustrative position size, $ per trade
 
 export const ENGINES = [
   { key: 'donchian', label: 'Algo 1 (1:3 Breakout)', color: '#22c55e' },
-  { key: 'algo2', label: 'Algo 2 (1:2 Bull Momentum)', color: '#3b82f6' },
-  { key: 'algo3', label: 'Algo 3 (1:2 Macro Short)', color: '#f59e0b' },
+  { key: 'algo2', label: 'Algo 2 (1:2 Sideways Range, 6d)', color: '#3b82f6' },
+  { key: 'algo3', label: 'Algo 3 (1:2 Macro Short, 5d)', color: '#f59e0b' },
 ] as const
 
 /**

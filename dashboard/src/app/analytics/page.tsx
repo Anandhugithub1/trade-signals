@@ -352,7 +352,7 @@ export default function Analytics() {
         {/* ── Engine comparison ── */}
         <Section
           title="Engine Comparison"
-          sub="Algo 1 (1:3 breakout) vs Algo 2 (1:2 bull momentum) vs Algo 3 (1:2 macro short) — win rate, profit factor, and realized R-multiple per trade, computed from actual entry/stop/target/close."
+          sub="Algo 1 (1:3 breakout, 10d) vs Algo 2 (1:2 sideways range, 6d) vs Algo 3 (1:2 macro short, 5d) — win rate, profit factor, and realized R-multiple per trade, computed from actual entry/stop/target/close."
         >
           {!mounted ? <Skel h={280} /> : (
             <div className="space-y-6">
