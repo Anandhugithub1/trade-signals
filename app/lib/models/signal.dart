@@ -90,7 +90,7 @@ class TradeSignal {
   String get strategyNote {
     if (isAlgo1) return '55-bar channel breakout on 4h bars, 1:3 R:R target (10d max hold)';
     if (isAlgo2) return '4h Sideways Regime Range, ADX < 24 + Bollinger Reversion, 1:2 R:R (+8% / -4%, 6d max hold)';
-    if (isAlgo3) return '4h Bearish Macro Breakdown Short, Price < EMA200 & EMA50, 1:2 R:R (+10% / -5%, 5d max hold)';
+    if (isAlgo3) return '4h Bearish Macro Breakdown Short, Price < EMA200 & EMA50, 1:2 R:R (+10% / -5%, +0.25% limit, 5d max hold)';
     if (isMeanReversion) {
       return 'RSI + Bollinger Band range-fade on 4h bars, ~1:1 target';
     }
