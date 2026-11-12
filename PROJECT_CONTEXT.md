@@ -108,7 +108,7 @@ File: `backend/check_signals/handler.py`
   order (SL checked before TP in the same candle — conservative assumption)
 - Updates `latest_price` on the signal row every run, even while still pending —
   this powers the "live P&L" display in the Flutter app and dashboard
-- 90-day TTL cleanup: deletes signals older than 90 days (also mirrored by a
+- 1-year TTL cleanup: deletes signals older than 365 days (also mirrored by a
   Supabase `pg_cron` job as a belt-and-suspenders backup)
 - Exits immediately (~2s) if there are zero pending signals — saves Action minutes
 

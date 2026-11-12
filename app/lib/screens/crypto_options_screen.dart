@@ -157,7 +157,7 @@ class _CryptoOptionsScreenState extends State<CryptoOptionsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('NET P&L (90d)',
+                Text('NET P&L (1y)''),
                     style: TextStyle(
                         color: c.t3,
                         fontSize: 11,

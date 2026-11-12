@@ -177,8 +177,8 @@ enum SignalDirection { long, short }
 
 enum SignalResult { pending, win, loss, expired }
 
-// Only signals within the last 90 days are retained
-final DateTime _cutoff = DateTime.now().subtract(const Duration(days: 90));
+// Only signals within the last 1 year (365 days) are retained
+final DateTime _cutoff = DateTime.now().subtract(const Duration(days: 365));
 
 List<TradeSignal> get signalsFeed =>
     _allSignals.where((s) => s.timestamp.isAfter(_cutoff)).toList();
@@ -258,7 +258,7 @@ class SignalStats {
   }
 }
 
-// Full historical dataset — signals auto-expire after 90 days
+// Full historical dataset — signals retained up to 1 year
 final List<TradeSignal> _allSignals = [
   // --- Active / Pending (last 24 hours) ---
   TradeSignal(

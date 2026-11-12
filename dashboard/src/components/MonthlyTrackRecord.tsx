@@ -5,7 +5,7 @@ import { supabase, isConfigured } from '@/lib/supabase'
 /**
  * Permanent month-by-month track record, read from `monthly_summary`.
  *
- * The signals tables have a 90-day TTL, so raw trades are deleted and any
+ * The signals tables have a 1-year window, so raw trades are deleted and any
  * history older than that is gone. This table is the durable record — one
  * tiny row per (month, market), written daily by backend/monthly_summary.
  */
@@ -159,7 +159,7 @@ const MonthlyTrackRecord = memo(function MonthlyTrackRecord() {
       <p className="text-[11px] text-[#8b949e] pt-1">
         P&amp;L is the sum of per-trade returns (% for crypto and shorts,
         USD for crypto options) — not a compounded account return. Kept
-        permanently; raw signals are deleted after 90 days.
+        permanently; raw signals are retained for 1 year.
       </p>
     </div>
   )

@@ -223,7 +223,7 @@ class _StatsCard extends StatelessWidget {
             children: [
               Text('Signal Statistics',
                   style: TextStyle(color: c.t1, fontSize: 15, fontWeight: FontWeight.w700)),
-              Text('Last 90 days', style: TextStyle(color: c.t3, fontSize: 11)),
+              Text('Last 1 Year', style: TextStyle(color: c.t3, fontSize: 11)),
             ],
           ),
           const SizedBox(height: 16),

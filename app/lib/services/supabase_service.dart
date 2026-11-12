@@ -64,10 +64,10 @@ class SupabaseService {
     }
   }
 
-  /// Signals from the last 90 days, newest first.
+  /// Signals from the last 1 year (365 days), newest first.
   static Future<List<TradeSignal>> fetchSignals() => _guard(() async {
         final cutoff = DateTime.now()
-            .subtract(const Duration(days: 90))
+            .subtract(const Duration(days: 365))
             .toIso8601String();
         final data = await _db
             .from('trade_signals')
@@ -79,11 +79,11 @@ class SupabaseService {
             .toList();
       });
 
-  /// BTC/ETH option signals from the last 90 days, newest first.
+  /// BTC/ETH option signals from the last 1 year, newest first.
   static Future<List<CryptoOptionSignal>> fetchCryptoOptionSignals() =>
       _guard(() async {
         final cutoff = DateTime.now()
-            .subtract(const Duration(days: 90))
+            .subtract(const Duration(days: 365))
             .toIso8601String();
         final data = await _db
             .from('crypto_option_signals')
@@ -95,12 +95,12 @@ class SupabaseService {
             .toList();
       });
 
-  /// "Short new listing" signals from the last 90 days, newest first.
+  /// "Short new listing" signals from the last 1 year, newest first.
   /// Replaces fetchStockSignals() — US stock signals were deprecated.
   static Future<List<NewListingShort>> fetchNewListingShorts() =>
       _guard(() async {
         final cutoff = DateTime.now()
-            .subtract(const Duration(days: 90))
+            .subtract(const Duration(days: 365))
             .toIso8601String();
         final data = await _db
             .from('new_listing_shorts')

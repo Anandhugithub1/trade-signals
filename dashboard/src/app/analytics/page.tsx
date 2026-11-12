@@ -279,7 +279,7 @@ export default function Analytics() {
                 <span className="text-xs text-[#6366f1] bg-[#6366f1]/10 px-2 py-0.5 rounded-full font-semibold">Admin</span>
               </div>
               <h1 className="text-3xl sm:text-4xl font-black text-white tracking-tight mb-1">Signal Performance</h1>
-              <p className="text-[#8b949e] text-sm">{signals.length} signals · {s.closed.length} closed · 90-day window</p>
+              <p className="text-[#8b949e] text-sm">{signals.length} signals · {s.closed.length} closed · 1-year window</p>
             </div>
             {/* right — big win rate */}
             <div className="flex-shrink-0 text-center sm:text-right">
@@ -310,10 +310,10 @@ export default function Analytics() {
 
         {/* ── Monthly track record ── */}
         {/* Sits above the charts because it is the only view that survives
-            the 90-day TTL — everything below is limited to that window. */}
+            the 1-year (365-day) window. */}
         <Section
           title="Monthly Track Record"
-          sub="Permanent month-by-month record across all three markets. Raw signals are deleted after 90 days; these rollups are kept forever."
+          sub="Permanent month-by-month record across all three markets. Raw signals are retained for 1 year; these rollups are kept forever."
         >
           <MonthlyTrackRecord />
         </Section>

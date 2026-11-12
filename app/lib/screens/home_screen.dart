@@ -316,7 +316,7 @@ class _HeroPerformanceCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  '90 Days',
+                  '1 Year',
                   style: TextStyle(
                     color: Colors.white.withValues(alpha: 0.9),
                     fontSize: 11,
