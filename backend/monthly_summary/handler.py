@@ -43,7 +43,7 @@ SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
 # Re-summarise this many months back on every run. Comfortably covers late
 # closes while staying well inside the 90-day TTL.
-RECOMPUTE_MONTHS = 4
+RECOMPUTE_MONTHS = 12
 
 # Each market: table, the column holding realised P&L, and its unit.
 #   crypto         — no stored P&L column, so it is derived from entry vs close_price
@@ -93,6 +93,33 @@ def trade_pnl(market: str, row: dict) -> float | None:
     return move if row.get("direction") != "short" else -move
 
 
+
+def trade_r(row: dict) -> float | None:
+    res = row.get("result")
+    if res not in ("win", "loss", "expired"):
+        return None
+    try:
+        entry = float(row.get("entry") or row.get("entry_price") or 0)
+        sl = float(row.get("stop_loss") or 0)
+        tp = float(row.get("take_profit") or 0)
+        close = float(row.get("close_price") or 0)
+        risk = abs(entry - sl)
+        if risk == 0:
+            return None
+        if res == "win":
+            return abs(tp - entry) / risk
+        elif res == "loss":
+            return -1.0
+        elif res == "expired" and close > 0:
+            diff = close - entry
+            direction = str(row.get("direction", "long")).lower()
+            directed_diff = diff if direction != "short" else -diff
+            return directed_diff / risk
+    except Exception:
+        return None
+    return None
+
+
 def summarise(market: str, rows: list, since: datetime) -> list[dict]:
     """Group closed trades into per-month summary rows."""
     buckets: dict[str, list] = defaultdict(list)
@@ -118,6 +145,9 @@ def summarise(market: str, rows: list, since: datetime) -> list[dict]:
         pnls = [p for p in (trade_pnl(market, t) for t in trades)
                 if p is not None]
 
+        r_values = [r for r in (trade_r(t) for t in trades) if r is not None]
+        total_r = round(sum(r_values), 2) if r_values else 0.0
+
         out.append({
             "month": month,
             "market": market,
@@ -127,6 +157,7 @@ def summarise(market: str, rows: list, since: datetime) -> list[dict]:
             "expired": expired,
             "win_rate": round(100 * wins / decided, 1) if decided else None,
             "pnl": round(sum(pnls), 2) if pnls else 0.0,
+            "total_r": total_r,
             "pnl_unit": MARKETS[market]["unit"],
             "best": round(max(pnls), 2) if pnls else None,
             "worst": round(min(pnls), 2) if pnls else None,

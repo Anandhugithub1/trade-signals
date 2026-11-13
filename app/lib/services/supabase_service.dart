@@ -1,3 +1,4 @@
+import '../models/monthly_summary.dart';
 import 'dart:async';
 import 'dart:io';
 
@@ -125,9 +126,28 @@ class SupabaseService {
       });
 
   /// Both in parallel — throws the first error if either fails.
-  static Future<({List<TradeSignal> signals, MarketSentiment? sentiment})>
+  
+  /// Fetch monthly summary records (permanent historical stats)
+  static Future<List<MonthlySummaryRow>> fetchMonthlySummary({String market = 'crypto', int limitMonths = 12}) =>
+      _guard(() async {
+        final data = await _db
+            .from('monthly_summary')
+            .select()
+            .eq('market', market)
+            .order('month', ascending: false)
+            .limit(limitMonths);
+        return data
+            .map<MonthlySummaryRow>((e) => MonthlySummaryRow.fromJson(e))
+            .toList();
+      });
+
+  static Future<({List<TradeSignal> signals, MarketSentiment? sentiment, List<MonthlySummaryRow> summaries})>
       fetchAll() async {
-    final (sigs, sent) = await (fetchSignals(), fetchLatestSentiment()).wait;
-    return (signals: sigs, sentiment: sent);
+    final (sigs, sent, sums) = await (
+      fetchSignals(),
+      fetchLatestSentiment(),
+      fetchMonthlySummary(market: 'crypto', limitMonths: 12),
+    ).wait;
+    return (signals: sigs, sentiment: sent, summaries: sums);
   }
 }

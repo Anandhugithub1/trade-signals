@@ -1,3 +1,4 @@
+import '../models/monthly_summary.dart';
 import 'package:flutter/material.dart';
 import '../models/signal.dart';
 import '../models/market_sentiment.dart';
@@ -16,7 +17,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  late Future<({List<TradeSignal> signals, MarketSentiment? sentiment})> _future;
+  late Future<({List<TradeSignal> signals, MarketSentiment? sentiment, List<MonthlySummaryRow> summaries})> _future;
 
   @override
   void initState() {
@@ -44,7 +45,7 @@ class _HomeScreenState extends State<HomeScreen> {
             final data = snap.data!;
             final signals = data.signals;
             final sentiment = data.sentiment ?? MarketSentiment.placeholder;
-            final stats = SignalStats.from(signals);
+            final stats = SignalStats.fromMonthlySummaries(data.summaries, signals);
             final active = signals.where((s) => s.isPending).toList();
             final feed = signals;
 

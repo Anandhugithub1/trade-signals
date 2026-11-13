@@ -538,11 +538,11 @@ def handler(event=None, context=None):
             stats["errors"].append(msg)
 
     # ── 3-month TTL cleanup ───────────────────────────────────────────────────
-    # Delete any signals (any result) whose timestamp is older than 1 year (365 days).
+    # Delete any signals (any result) whose timestamp is older than 90 days (summarised in monthly_summary).
     # This mirrors what pg_cron does inside Supabase — keeping both means the
     # data is cleaned whether this script runs or not.
     try:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
         deleted = (
             supabase.table("trade_signals")
             .delete()
@@ -550,7 +550,7 @@ def handler(event=None, context=None):
             .execute()
         )
         n_deleted = len(deleted.data) if deleted.data else 0
-        print(f"\n  [TTL]  Deleted {n_deleted} signal(s) older than 1 year (365 days)  (cutoff: {cutoff[:10]})")
+        print(f"\n  [TTL]  Deleted {n_deleted} signal(s) older than 90 days (summarised in monthly_summary)  (cutoff: {cutoff[:10]})")
         stats["deleted_old"] = n_deleted
     except Exception as exc:
         print(f"\n  [TTL ERR]  Cleanup failed: {exc}")
@@ -560,7 +560,7 @@ def handler(event=None, context=None):
     print(f"[check_signals] Done at {ms_to_utc(now_ms())}")
     print(f"  Updated      : {stats['updated']}")
     print(f"  Pending      : {stats['still_pending']}")
-    print(f"  Deleted >1y : {stats.get('deleted_old', 0)}")
+    print(f"  Deleted >90d : {stats.get('deleted_old', 0)}")
     print(f"  Errors       : {len(stats['errors'])}")
     if stats["errors"]:
         for e in stats["errors"]:

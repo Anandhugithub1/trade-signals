@@ -1,3 +1,4 @@
+import 'monthly_summary.dart';
 class TradeSignal {
   final String id;
   final String pair;
@@ -235,6 +236,39 @@ class SignalStats {
       losses: l,
       expired: exp,
       pending: signals.where((s) => s.isPending).length,
+      totalR: totalR,
+    );
+  }
+
+  
+  /// Aggregates historical monthly_summary rows into SignalStats for 1-Year / All-time rollups.
+  /// Falls back to raw signals if summaries are empty.
+  factory SignalStats.fromMonthlySummaries(List<MonthlySummaryRow> summaries, List<TradeSignal> currentSignals) {
+    if (summaries.isEmpty) {
+      return SignalStats.from(currentSignals);
+    }
+    int totalTrades = 0;
+    int totalWins = 0;
+    int totalLosses = 0;
+    int totalExpired = 0;
+    double totalR = 0;
+
+    for (final m in summaries) {
+      totalTrades += m.trades;
+      totalWins += m.wins;
+      totalLosses += m.losses;
+      totalExpired += m.expired;
+      totalR += m.totalR;
+    }
+
+    final pendingCount = currentSignals.where((s) => s.isPending).length;
+
+    return SignalStats(
+      total: totalTrades > 0 ? totalTrades : currentSignals.length,
+      wins: totalWins,
+      losses: totalLosses,
+      expired: totalExpired,
+      pending: pendingCount,
       totalR: totalR,
     );
   }
