@@ -1,3 +1,4 @@
+import 'screens/analytics_screen.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -73,6 +74,7 @@ class _MainShellState extends State<MainShell> {
     HomeScreen(),
     SignalsScreen(),
     NewListingShortsScreen(),
+    AnalyticsScreen(),
     ProfileScreen(),
   ];
 
@@ -115,6 +117,11 @@ class _MainShellState extends State<MainShell> {
               icon: Icon(Icons.trending_down_outlined, color: c.t3),
               selectedIcon: Icon(Icons.trending_down_rounded, color: c.accent),
               label: 'Shorts',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.insights_outlined, color: c.t3),
+              selectedIcon: Icon(Icons.insights_rounded, color: c.accent),
+              label: 'Analytics',
             ),
             NavigationDestination(
               icon: Icon(Icons.person_outline_rounded, color: c.t3),
