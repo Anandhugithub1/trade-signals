@@ -261,6 +261,8 @@ class SignalStats {
       totalR += m.totalR;
     }
 
+    final rawStats = SignalStats.from(currentSignals);
+    final effectiveTotalR = totalR != 0 ? totalR : rawStats.totalR;
     final pendingCount = currentSignals.where((s) => s.isPending).length;
 
     return SignalStats(
@@ -269,7 +271,7 @@ class SignalStats {
       losses: totalLosses,
       expired: totalExpired,
       pending: pendingCount,
-      totalR: totalR,
+      totalR: effectiveTotalR,
     );
   }
 

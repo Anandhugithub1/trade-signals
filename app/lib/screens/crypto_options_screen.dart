@@ -157,12 +157,14 @@ class _CryptoOptionsScreenState extends State<CryptoOptionsScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('NET P&L (1y)''),
-                    style: TextStyle(
-                        color: c.t3,
-                        fontSize: 11,
-                        letterSpacing: 0.6,
-                        fontWeight: FontWeight.w600)),
+                Text(
+                  'NET P&L (1y)',
+                  style: TextStyle(
+                      color: c.t3,
+                      fontSize: 11,
+                      letterSpacing: 0.6,
+                      fontWeight: FontWeight.w600),
+                ),
                 const SizedBox(height: 6),
                 Text(
                   '${positive ? '+' : ''}\$${stats.netPnlUsd.toStringAsFixed(0)}',

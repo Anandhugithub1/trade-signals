@@ -188,7 +188,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       ),
                       alignment: Alignment.center,
                       child: Text(
-                        'al',
+                        '\$$val',
                         style: TextStyle(
                           color: isSel ? Colors.white : c.t1,
                           fontSize: 12,
@@ -298,13 +298,17 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   Widget _buildAlgoOverview(AppColors c, List<TradeSignal> signals, List<MonthlySummaryRow> summaries) {
-    final stats = SignalStats.from(signals);
+    final stats = summaries.isNotEmpty
+        ? SignalStats.fromMonthlySummaries(summaries, signals)
+        : SignalStats.from(signals);
     final totalR = stats.totalR;
-    // Each 1R with 2x leverage on capital = capital * 2 * target_risk (or ~capital * 5% risk = .50 per 1R)
-    // Conservative baseline: 1R = 5% of stake (.50 for  capital)
+    // Each 1R with 2x leverage on capital = capital * 2 * target_risk (~5% of stake)
     final dollarPerR = _capital * 0.05;
     final estimatedDollars = totalR * dollarPerR;
     final isPos = estimatedDollars >= 0;
+    final dollarStr = '${isPos ? '+' : '-'}\$${estimatedDollars.abs().toStringAsFixed(1)}';
+    final rStr = '${isPos ? '+' : ''}${totalR.toStringAsFixed(1)}R';
+    final roiPct = _capital > 0 ? (estimatedDollars / _capital * 100) : 0.0;
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -330,7 +334,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'ESTIMATED RETURN ON \ CAPITAL',
+            'ESTIMATED RETURN ON \$${_capital.toStringAsFixed(0)} CAPITAL',
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.7),
               fontSize: 11,
@@ -344,17 +348,17 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             textBaseline: TextBaseline.alphabetic,
             children: [
               Text(
-                '\{estimatedDollars.toStringAsFixed(1)}',
+                dollarStr,
                 style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 38,
+                  fontSize: 36,
                   fontWeight: FontWeight.w900,
                   letterSpacing: -1,
                 ),
               ),
               const SizedBox(width: 8),
               Text(
-                '(R)',
+                '($rStr)',
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.8),
                   fontSize: 16,
@@ -365,7 +369,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           ),
           const SizedBox(height: 6),
           Text(
-            'ROI: % across  closed signals',
+            'ROI: ${roiPct >= 0 ? '+' : ''}${roiPct.toStringAsFixed(1)}% across ${stats.closed} closed signals',
             style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13),
           ),
           const SizedBox(height: 18),
@@ -374,9 +378,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _metricBlock('Win Rate', '%'),
-              _metricBlock('Signals Won', ''),
-              _metricBlock('Signals Lost', ''),
+              _metricBlock('Win Rate', '${(stats.winRate * 100).toStringAsFixed(1)}%'),
+              _metricBlock('Signals Won', '${stats.wins}'),
+              _metricBlock('Signals Lost', '${stats.losses}'),
               _metricBlock('Profit Factor', stats.profitFactor == double.infinity ? '∞' : stats.profitFactor.toStringAsFixed(2)),
             ],
           ),
@@ -448,6 +452,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final dollarPerR = _capital * 0.05;
     final estDollar = totalR * dollarPerR;
     final isPos = estDollar >= 0;
+    final dollarStr = '${isPos ? '+' : '-'}\$${estDollar.abs().toStringAsFixed(1)}';
+    final rStr = '${isPos ? '+' : ''}${totalR.toStringAsFixed(1)}R';
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -476,7 +482,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    '\{estDollar.toStringAsFixed(1)}',
+                    dollarStr,
                     style: TextStyle(
                       color: isPos ? c.long : c.short,
                       fontSize: 16,
@@ -484,7 +490,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     ),
                   ),
                   Text(
-                    'R',
+                    rStr,
                     style: TextStyle(color: c.t3, fontSize: 11, fontWeight: FontWeight.w600),
                   ),
                 ],
@@ -495,10 +501,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Trades: ', style: TextStyle(color: c.t2, fontSize: 12)),
-              Text('W/L: /', style: TextStyle(color: c.t2, fontSize: 12)),
-              Text('Win Rate: %', style: TextStyle(color: accentColor, fontSize: 12, fontWeight: FontWeight.w700)),
-              Text('PF: ', style: TextStyle(color: c.t2, fontSize: 12)),
+              Text('Trades: ${stats.total}', style: TextStyle(color: c.t2, fontSize: 12)),
+              Text('W/L: ${stats.wins}/${stats.losses}', style: TextStyle(color: c.t2, fontSize: 12)),
+              Text('Win Rate: ${(stats.winRate * 100).toStringAsFixed(0)}%', style: TextStyle(color: accentColor, fontSize: 12, fontWeight: FontWeight.w700)),
+              Text('PF: ${stats.profitFactor == double.infinity ? '∞' : stats.profitFactor.toStringAsFixed(2)}', style: TextStyle(color: c.t2, fontSize: 12)),
             ],
           ),
         ],
@@ -507,7 +513,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   Widget _buildMonthlyTable(AppColors c, List<MonthlySummaryRow> summaries, List<TradeSignal> signals) {
-    if (summaries.isEmpty) {
+    final cryptoSummaries = summaries.where((m) => m.market == 'crypto').toList();
+    if (cryptoSummaries.isEmpty) {
       return const SizedBox.shrink();
     }
 
@@ -525,16 +532,17 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text('MONTHLY PERFORMANCE', style: TextStyle(color: c.t3, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
-              Text('Est. for ', style: TextStyle(color: c.accent, fontSize: 11, fontWeight: FontWeight.w600)),
+              Text('Est. for \$${_capital.toStringAsFixed(0)}', style: TextStyle(color: c.accent, fontSize: 11, fontWeight: FontWeight.w600)),
             ],
           ),
           const SizedBox(height: 14),
-          ...summaries.map((m) {
+          ...cryptoSummaries.map((m) {
             // pnl in monthly_summary is total cumulative %
             final pnlPct = m.pnl;
             final estMonthUsd = _capital * (pnlPct / 100);
             final isPos = estMonthUsd >= 0;
             final monthStr = m.month.length >= 7 ? m.month.substring(0, 7) : m.month;
+            final dollarStr = '${isPos ? '+' : '-'}\$${estMonthUsd.abs().toStringAsFixed(1)}';
 
             return Padding(
               padding: const EdgeInsets.only(bottom: 12),
@@ -546,12 +554,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   ),
                   Expanded(
                     flex: 3,
-                    child: Text('W / L', style: TextStyle(color: c.t2, fontSize: 12)),
+                    child: Text('${m.wins}W / ${m.losses}L', style: TextStyle(color: c.t2, fontSize: 12)),
                   ),
                   Expanded(
                     flex: 3,
                     child: Text(
-                      m.winRate != null ? '%' : '—',
+                      m.winRate != null ? '${m.winRate!.toStringAsFixed(0)}%' : '—',
                       style: TextStyle(
                         color: (m.winRate ?? 0) >= 50 ? c.long : c.short,
                         fontSize: 12,
@@ -562,7 +570,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   Expanded(
                     flex: 4,
                     child: Text(
-                      '\{estMonthUsd.toStringAsFixed(1)}',
+                      dollarStr,
                       textAlign: TextAlign.end,
                       style: TextStyle(
                         color: isPos ? c.long : c.short,
@@ -596,6 +604,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
     final estimatedDollarProfit = _capital * (totalPnlPct / 100);
     final isPos = estimatedDollarProfit >= 0;
+    final dollarStr = '${isPos ? '+' : '-'}\$${estimatedDollarProfit.abs().toStringAsFixed(1)}';
+    final avgDrop = closed.isNotEmpty ? (totalPnlPct / closed.length) : 0.0;
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -614,17 +624,17 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'NEW LISTING SHORTS (\ CAPITAL)',
+            'NEW LISTING SHORTS (\$${_capital.toStringAsFixed(0)} CAPITAL)',
             style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.0),
           ),
           const SizedBox(height: 12),
           Text(
-            '\{estimatedDollarProfit.toStringAsFixed(1)}',
-            style: const TextStyle(color: Colors.white, fontSize: 38, fontWeight: FontWeight.w900, letterSpacing: -1),
+            dollarStr,
+            style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.w900, letterSpacing: -1),
           ),
           const SizedBox(height: 6),
           Text(
-            'Cumulative PnL: % across  closed listing dumps',
+            'Cumulative PnL: ${totalPnlPct >= 0 ? '+' : ''}${totalPnlPct.toStringAsFixed(1)}% across ${closed.length} closed listing dumps',
             style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13),
           ),
           const SizedBox(height: 18),
@@ -633,10 +643,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _metricBlock('Win Rate', '%'),
-              _metricBlock('Dumps Captured', ''),
-              _metricBlock('Stopped Out', ''),
-              _metricBlock('Avg Drop', closed.isNotEmpty ? '%' : '0%'),
+              _metricBlock('Win Rate', '${(winRate * 100).toStringAsFixed(1)}%'),
+              _metricBlock('Dumps Captured', '$wins'),
+              _metricBlock('Stopped Out', '$losses'),
+              _metricBlock('Avg Drop', '${avgDrop >= 0 ? '+' : ''}${avgDrop.toStringAsFixed(1)}%'),
             ],
           ),
         ],
@@ -662,6 +672,9 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           final isPending = s.result == ShortResult.pending;
           final pnl = s.pnlPct ?? 0.0;
           final estUsd = _capital * (pnl / 100);
+          final pnlSign = pnl >= 0 ? '+' : '-';
+          final estUsdStr = '$pnlSign\$${estUsd.abs().toStringAsFixed(2)}';
+          final pnlPctStr = '${pnl >= 0 ? '+' : ''}${pnl.toStringAsFixed(1)}%';
 
           return Container(
             margin: const EdgeInsets.only(bottom: 8),
@@ -679,7 +692,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     children: [
                       Text(s.symbol, style: TextStyle(color: c.t1, fontSize: 14, fontWeight: FontWeight.w700)),
                       const SizedBox(height: 2),
-                      Text('Entry: \{s.entry.toStringAsFixed(4)}', style: TextStyle(color: c.t3, fontSize: 11)),
+                      Text('Entry: \$${s.entry.toStringAsFixed(4)}', style: TextStyle(color: c.t3, fontSize: 11)),
                     ],
                   ),
                 ),
@@ -703,7 +716,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      isPending ? '—' : '\{estUsd.toStringAsFixed(2)}',
+                      isPending ? '—' : estUsdStr,
                       style: TextStyle(
                         color: pnl >= 0 ? c.long : c.short,
                         fontSize: 14,
@@ -711,7 +724,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       ),
                     ),
                     Text(
-                      isPending ? 'Pending' : '%',
+                      isPending ? 'Pending' : pnlPctStr,
                       style: TextStyle(color: c.t3, fontSize: 11),
                     ),
                   ],

@@ -45,7 +45,9 @@ class _HomeScreenState extends State<HomeScreen> {
             final data = snap.data!;
             final signals = data.signals;
             final sentiment = data.sentiment ?? MarketSentiment.placeholder;
-            final stats = SignalStats.from(signals);
+            final stats = data.summaries.isNotEmpty
+                ? SignalStats.fromMonthlySummaries(data.summaries, signals)
+                : SignalStats.from(signals);
             final active = signals.where((s) => s.isPending).toList();
             final feed = signals;
 
