@@ -6,6 +6,7 @@ import '../models/monthly_summary.dart';
 import '../services/supabase_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/error_view.dart';
+import '../widgets/shimmer.dart';
 
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({super.key});
@@ -22,7 +23,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   })> _future;
 
   double _capital = 50.0;
-  int _selectedMarketIndex = 0; // 0: All Algo Trades, 1: New Listing Shorts
+  int _selectedMarketIndex = 0; // 0: Algo Futures, 1: New Listing Shorts
 
   @override
   void initState() {
@@ -52,82 +53,143 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final c = context.colors;
     return Scaffold(
       backgroundColor: c.bg,
-      appBar: AppBar(
-        backgroundColor: c.surface,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        title: Text(
-          'Analytics & Estimator',
-          style: TextStyle(color: c.t1, fontSize: 18, fontWeight: FontWeight.w700),
+      body: SafeArea(
+        child: FutureBuilder(
+          future: _future,
+          builder: (context, snap) {
+            if (snap.connectionState == ConnectionState.waiting) {
+              return _buildLoading(c);
+            }
+            if (snap.hasError) {
+              return ErrorView(error: snap.error!, onRetry: () => setState(_load));
+            }
+
+            final data = snap.data!;
+            final signals = data.signals;
+            final shorts = data.shorts;
+            final summaries = data.summaries;
+
+            return RefreshIndicator(
+              onRefresh: () async => setState(_load),
+              color: c.accent,
+              backgroundColor: c.card,
+              child: ListView(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                physics: const AlwaysScrollableScrollPhysics(
+                  parent: BouncingScrollPhysics(),
+                ),
+                children: [
+                  const SizedBox(height: 20),
+                  _buildHeader(c),
+                  const SizedBox(height: 16),
+
+                  // 1. Capital Estimator Card
+                  _buildCapitalEstimatorCard(c),
+                  const SizedBox(height: 14),
+
+                  // 2. Segment selector (Algo Futures vs New Listing Shorts)
+                  _buildMarketSelector(c),
+                  const SizedBox(height: 16),
+
+                  if (_selectedMarketIndex == 0) ...[
+                    // Algo Performance Hero Card
+                    _buildAlgoHeroCard(c, signals, summaries),
+                    const SizedBox(height: 18),
+
+                    // Engine Breakdown (Algo 1, Algo 2, Algo 3)
+                    _buildEngineBreakdown(c, signals),
+                    const SizedBox(height: 18),
+
+                    // Monthly Performance Table
+                    _buildMonthlyTable(c, summaries, signals),
+                  ] else ...[
+                    // New Listing Shorts Hero Card
+                    _buildShortsHeroCard(c, shorts),
+                    const SizedBox(height: 18),
+
+                    // Shorts Breakdown List
+                    _buildShortsList(c, shorts),
+                  ],
+
+                  const SizedBox(height: 32),
+                ],
+              ),
+            );
+          },
         ),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.refresh_rounded, color: c.t2),
-            onPressed: () => setState(_load),
-          ),
-        ],
-      ),
-      body: FutureBuilder(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snap.hasError) {
-            return ErrorView(error: snap.error!, onRetry: () => setState(_load));
-          }
-
-          final data = snap.data!;
-          final signals = data.signals;
-          final shorts = data.shorts;
-          final summaries = data.summaries;
-
-          return ListView(
-            padding: const EdgeInsets.all(20),
-            physics: const BouncingScrollPhysics(),
-            children: [
-              // 1. Capital Estimator Widget
-              _buildCapitalCard(c),
-              const SizedBox(height: 16),
-
-              // 2. Segment selector (Algo Trades vs New Listing Shorts)
-              _buildMarketSelector(c),
-              const SizedBox(height: 16),
-
-              if (_selectedMarketIndex == 0) ...[
-                // Algo Performance Overview
-                _buildAlgoOverview(c, signals, summaries),
-                const SizedBox(height: 20),
-
-                // Per-Engine Comparison Breakdown (Algo 1, Algo 2, Algo 3)
-                _buildEngineBreakdown(c, signals),
-                const SizedBox(height: 20),
-
-                // Monthly Performance Table
-                _buildMonthlyTable(c, summaries, signals),
-              ] else ...[
-                // New Listing Shorts Overview
-                _buildShortsOverview(c, shorts),
-                const SizedBox(height: 20),
-
-                // Shorts Trade List Analysis
-                _buildShortsList(c, shorts),
-              ],
-
-              const SizedBox(height: 30),
-            ],
-          );
-        },
       ),
     );
   }
 
-  Widget _buildCapitalCard(AppColors c) {
+  Widget _buildLoading(AppColors c) {
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      physics: const NeverScrollableScrollPhysics(),
+      children: [
+        const SizedBox(height: 20),
+        _buildHeader(c),
+        const SizedBox(height: 20),
+        ...[160.0, 48.0, 200.0, 110.0, 110.0, 110.0].map(
+          (h) => Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: ShimmerBox(height: h),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildHeader(AppColors c) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Analytics & Estimator',
+              style: TextStyle(
+                color: c.t1,
+                fontSize: 24,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.5,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              'Simulate returns & track multi-engine P&L',
+              style: TextStyle(color: c.t2, fontSize: 12),
+            ),
+          ],
+        ),
+        GestureDetector(
+          onTap: () {
+            HapticFeedback.selectionClick();
+            setState(_load);
+          },
+          child: Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: c.accentBg,
+              shape: BoxShape.circle,
+              border: Border.all(color: c.accent.withValues(alpha: 0.3)),
+            ),
+            child: Icon(Icons.refresh_rounded, color: c.accent, size: 19),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // --- CAPITAL ESTIMATOR CARD ---
+  Widget _buildCapitalEstimatorCard(AppColors c) {
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: c.card,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: c.border),
       ),
       child: Column(
@@ -142,30 +204,35 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   color: c.t3,
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
-                  letterSpacing: 1.0,
+                  letterSpacing: 0.8,
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: c.accent.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(12),
+                  color: c.accentBg,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: c.accent.withValues(alpha: 0.3)),
                 ),
                 child: Text(
                   'Simulated \$${_capital.toStringAsFixed(0)}',
-                  style: TextStyle(color: c.accent, fontSize: 12, fontWeight: FontWeight.w700),
+                  style: TextStyle(
+                    color: c.accent,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           Text(
             'See your projected dollar earnings if you trade each signal with \$${_capital.toStringAsFixed(0)} capital.',
-            style: TextStyle(color: c.t2, fontSize: 13),
+            style: TextStyle(color: c.t2, fontSize: 12, height: 1.4),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
 
-          // Quick preset buttons
+          // Preset Chips ($25, $50, $100, $250, $500)
           Row(
             children: [25, 50, 100, 250, 500].map((val) {
               final isSel = _capital == val.toDouble();
@@ -181,7 +248,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       padding: const EdgeInsets.symmetric(vertical: 8),
                       decoration: BoxDecoration(
                         color: isSel ? c.accent : c.surface,
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(8),
                         border: Border.all(
                           color: isSel ? c.accent : c.border,
                         ),
@@ -192,7 +259,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                         style: TextStyle(
                           color: isSel ? Colors.white : c.t1,
                           fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: isSel ? FontWeight.w700 : FontWeight.w600,
                         ),
                       ),
                     ),
@@ -201,7 +268,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               );
             }).toList(),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
 
           // Slider
           SliderTheme(
@@ -210,6 +277,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               inactiveTrackColor: c.border,
               thumbColor: c.accent,
               trackHeight: 4,
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 7),
             ),
             child: Slider(
               value: _capital,
@@ -219,17 +288,29 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               onChanged: (v) => setState(() => _capital = v),
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('\$10 min', style: TextStyle(color: c.t3, fontSize: 10, fontWeight: FontWeight.w500)),
+                Text('Drag to adjust custom capital', style: TextStyle(color: c.t3, fontSize: 10)),
+                Text('\$1,000 max', style: TextStyle(color: c.t3, fontSize: 10, fontWeight: FontWeight.w500)),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 
+  // --- SEGMENT SELECTOR ---
   Widget _buildMarketSelector(AppColors c) {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: c.surface,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: c.border),
       ),
       child: Row(
@@ -270,15 +351,19 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         onTap();
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10),
+        padding: const EdgeInsets.symmetric(vertical: 9),
         decoration: BoxDecoration(
           color: selected ? color.accent : Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 16, color: selected ? Colors.white : color.t2),
+            Icon(
+              icon,
+              size: 15,
+              color: selected ? Colors.white : color.t2,
+            ),
             const SizedBox(width: 6),
             Flexible(
               child: Text(
@@ -286,7 +371,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 style: TextStyle(
                   color: selected ? Colors.white : color.t2,
                   fontSize: 12,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
                 ),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -297,91 +382,173 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  Widget _buildAlgoOverview(AppColors c, List<TradeSignal> signals, List<MonthlySummaryRow> summaries) {
+  // --- ALGO HERO PERFORMANCE CARD (Standard Zenviq Blue Gradient) ---
+  Widget _buildAlgoHeroCard(
+    AppColors c,
+    List<TradeSignal> signals,
+    List<MonthlySummaryRow> summaries,
+  ) {
     final stats = summaries.isNotEmpty
         ? SignalStats.fromMonthlySummaries(summaries, signals)
         : SignalStats.from(signals);
     final totalR = stats.totalR;
-    // Each 1R with 2x leverage on capital = capital * 2 * target_risk (~5% of stake)
     final dollarPerR = _capital * 0.05;
     final estimatedDollars = totalR * dollarPerR;
     final isPos = estimatedDollars >= 0;
-    final dollarStr = '${isPos ? '+' : '-'}\$${estimatedDollars.abs().toStringAsFixed(1)}';
+    final sign = isPos ? '+' : '-';
+    final dollarStr = '$sign\$${estimatedDollars.abs().toStringAsFixed(1)}';
     final rStr = '${isPos ? '+' : ''}${totalR.toStringAsFixed(1)}R';
-    final roiPct = _capital > 0 ? (estimatedDollars / _capital * 100) : 0.0;
+    final winPct = stats.winRate;
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
+        gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            isPos ? const Color(0xFF064E3B) : const Color(0xFF7F1D1D),
-            isPos ? const Color(0xFF047857) : const Color(0xFF991B1B),
-          ],
+          colors: [Color(0xFF1E3A8A), Color(0xFF1D4ED8), Color(0xFF2563EB)],
+          stops: [0.0, 0.5, 1.0],
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         boxShadow: [
           BoxShadow(
-            color: (isPos ? const Color(0xFF059669) : const Color(0xFFDC2626)).withValues(alpha: 0.3),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
+            color: const Color(0xFF2563EB).withValues(alpha: 0.35),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'ESTIMATED RETURN ON \$${_capital.toStringAsFixed(0)} CAPITAL',
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.7),
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 1.0,
-            ),
-          ),
-          const SizedBox(height: 12),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                dollarStr,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 36,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: -1,
+                'PROJECTED RETURN (1 YEAR)',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.7),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
                 ),
               ),
-              const SizedBox(width: 8),
-              Text(
-                '($rStr)',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.8),
-                  fontSize: 16,
-                  fontWeight: FontWeight.w700,
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  'Based on \$${_capital.toStringAsFixed(0)} / trade',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.9),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            'ROI: ${roiPct >= 0 ? '+' : ''}${roiPct.toStringAsFixed(1)}% across ${stats.closed} closed signals',
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.75), fontSize: 13),
-          ),
-          const SizedBox(height: 18),
-          Divider(color: Colors.white.withValues(alpha: 0.2)),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
+
+          // Big Dollar Figure
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              _metricBlock('Win Rate', '${(stats.winRate * 100).toStringAsFixed(1)}%'),
-              _metricBlock('Signals Won', '${stats.wins}'),
-              _metricBlock('Signals Lost', '${stats.losses}'),
-              _metricBlock('Profit Factor', stats.profitFactor == double.infinity ? '∞' : stats.profitFactor.toStringAsFixed(2)),
+              Text(
+                dollarStr,
+                style: TextStyle(
+                  color: isPos ? const Color(0xFF86EFAC) : const Color(0xFFFCA5A5),
+                  fontSize: 44,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -1.5,
+                  height: 1.0,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Profit (USD)',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.8),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      '$rStr realized',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.65),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Win Rate Indicator Bar
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Stack(
+              children: [
+                Container(
+                  height: 6,
+                  width: double.infinity,
+                  color: Colors.white.withValues(alpha: 0.15),
+                ),
+                FractionallySizedBox(
+                  widthFactor: winPct.clamp(0.0, 1.0),
+                  child: Container(
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // 4 Stats Columns
+          Row(
+            children: [
+              _heroStat(
+                value: '${(winPct * 100).toStringAsFixed(0)}%',
+                label: 'Win Rate',
+                color: const Color(0xFF86EFAC),
+              ),
+              _heroStatDivider(),
+              _heroStat(
+                value: '${stats.wins}',
+                label: 'Won',
+                color: const Color(0xFF86EFAC),
+              ),
+              _heroStatDivider(),
+              _heroStat(
+                value: '${stats.losses}',
+                label: 'Lost',
+                color: const Color(0xFFFCA5A5),
+              ),
+              _heroStatDivider(),
+              _heroStat(
+                value: stats.profitFactor == double.infinity ? '∞' : stats.profitFactor.toStringAsFixed(2),
+                label: 'Profit Factor',
+                color: Colors.white,
+              ),
             ],
           ),
         ],
@@ -389,17 +556,49 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  Widget _metricBlock(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: TextStyle(color: Colors.white.withValues(alpha: 0.6), fontSize: 11)),
-        const SizedBox(height: 2),
-        Text(value, style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w700)),
-      ],
+  Widget _heroStat({
+    required String value,
+    required String label,
+    required Color color,
+  }) {
+    return Expanded(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              letterSpacing: -0.5,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.55),
+              fontSize: 10,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
+  Widget _heroStatDivider() {
+    return Container(
+      width: 1,
+      height: 28,
+      color: Colors.white.withValues(alpha: 0.15),
+      margin: const EdgeInsets.symmetric(horizontal: 2),
+    );
+  }
+
+  // --- ALGORITHM BREAKDOWN (3 CARDS) ---
   Widget _buildEngineBreakdown(AppColors c, List<TradeSignal> signals) {
     final a1Signals = signals.where((s) => s.strategy == 'donchian').toList();
     final a2Signals = signals.where((s) => s.strategy == 'algo2').toList();
@@ -410,12 +609,17 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       children: [
         Text(
           'ALGORITHM BREAKDOWN',
-          style: TextStyle(color: c.t3, fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 0.8),
+          style: TextStyle(
+            color: c.t3,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.8,
+          ),
         ),
         const SizedBox(height: 10),
         _engineCard(
-          title: 'Algo 1: Trade-Signals Donchian 55',
-          ratio: '1:3 R:R (+15% / -5%)',
+          title: 'Algo 1: Donchian Breakout 55',
+          ratio: '1:3 R:R (+15% / -5%) · 10d max hold',
           signals: a1Signals,
           accentColor: c.long,
           c: c,
@@ -423,15 +627,15 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         const SizedBox(height: 10),
         _engineCard(
           title: 'Algo 2: Sideways Regime Range',
-          ratio: '1:2 R:R (+8% / -4%)',
+          ratio: '1:2 R:R (+8% / -4%) · 6d max hold',
           signals: a2Signals,
-          accentColor: const Color(0xFF60A5FA),
+          accentColor: c.accent,
           c: c,
         ),
         const SizedBox(height: 10),
         _engineCard(
           title: 'Algo 3: Bearish Macro Short',
-          ratio: '1:2 R:R (+10% / -5%)',
+          ratio: '1:2 R:R (+10% / -5%) · 10d max hold',
           signals: a3Signals,
           accentColor: c.gold,
           c: c,
@@ -467,17 +671,47 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: TextStyle(color: c.t1, fontSize: 14, fontWeight: FontWeight.w700)),
-                    const SizedBox(height: 2),
-                    Text(ratio, style: TextStyle(color: c.t3, fontSize: 11)),
+                    Row(
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: accentColor,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            title,
+                            style: TextStyle(
+                              color: c.t1,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Padding(
+                      padding: const EdgeInsets.only(left: 16),
+                      child: Text(
+                        ratio,
+                        style: TextStyle(color: c.t3, fontSize: 11),
+                      ),
+                    ),
                   ],
                 ),
               ),
+              const SizedBox(width: 8),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
@@ -485,26 +719,47 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     dollarStr,
                     style: TextStyle(
                       color: isPos ? c.long : c.short,
-                      fontSize: 16,
+                      fontSize: 17,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
+                  const SizedBox(height: 2),
                   Text(
                     rStr,
-                    style: TextStyle(color: c.t3, fontSize: 11, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                      color: c.t3,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ],
               ),
             ],
           ),
+          const SizedBox(height: 14),
+          Divider(color: c.border.withValues(alpha: 0.6), height: 1),
           const SizedBox(height: 12),
+
+          // 4 Aligned Columns
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('Trades: ${stats.total}', style: TextStyle(color: c.t2, fontSize: 12)),
-              Text('W/L: ${stats.wins}/${stats.losses}', style: TextStyle(color: c.t2, fontSize: 12)),
-              Text('Win Rate: ${(stats.winRate * 100).toStringAsFixed(0)}%', style: TextStyle(color: accentColor, fontSize: 12, fontWeight: FontWeight.w700)),
-              Text('PF: ${stats.profitFactor == double.infinity ? '∞' : stats.profitFactor.toStringAsFixed(2)}', style: TextStyle(color: c.t2, fontSize: 12)),
+              _statColumn(label: 'TRADES', value: '${stats.total}', color: c.t1, c: c),
+              _statColumn(label: 'W / L', value: '${stats.wins}W / ${stats.losses}L', color: c.t1, c: c),
+              _statColumn(
+                label: 'WIN RATE',
+                value: stats.closed == 0 ? '—' : '${(stats.winRate * 100).toStringAsFixed(0)}%',
+                color: accentColor,
+                c: c,
+              ),
+              _statColumn(
+                label: 'PF',
+                value: stats.closed == 0
+                    ? '—'
+                    : (stats.profitFactor == double.infinity ? '∞' : stats.profitFactor.toStringAsFixed(2)),
+                color: c.t1,
+                c: c,
+                alignRight: true,
+              ),
             ],
           ),
         ],
@@ -512,17 +767,56 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  Widget _buildMonthlyTable(AppColors c, List<MonthlySummaryRow> summaries, List<TradeSignal> signals) {
+  Widget _statColumn({
+    required String label,
+    required String value,
+    required Color color,
+    required AppColors c,
+    bool alignRight = false,
+  }) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: alignRight ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: c.t3,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- MONTHLY PERFORMANCE TABLE ---
+  Widget _buildMonthlyTable(
+    AppColors c,
+    List<MonthlySummaryRow> summaries,
+    List<TradeSignal> signals,
+  ) {
     final cryptoSummaries = summaries.where((m) => m.market == 'crypto').toList();
     if (cryptoSummaries.isEmpty) {
       return const SizedBox.shrink();
     }
 
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: c.card,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: c.border),
       ),
       child: Column(
@@ -531,35 +825,83 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('MONTHLY PERFORMANCE', style: TextStyle(color: c.t3, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.8)),
-              Text('Est. for \$${_capital.toStringAsFixed(0)}', style: TextStyle(color: c.accent, fontSize: 11, fontWeight: FontWeight.w600)),
+              Text(
+                'MONTHLY PERFORMANCE',
+                style: TextStyle(
+                  color: c.t3,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
+                ),
+              ),
+              Text(
+                'Est. for \$${_capital.toStringAsFixed(0)} / trade',
+                style: TextStyle(
+                  color: c.accent,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 14),
+
+          // Table Column Headers
+          Row(
+            children: [
+              Expanded(
+                flex: 4,
+                child: Text('MONTH', style: TextStyle(color: c.t3, fontSize: 10, fontWeight: FontWeight.w700)),
+              ),
+              Expanded(
+                flex: 3,
+                child: Text('RECORD', style: TextStyle(color: c.t3, fontSize: 10, fontWeight: FontWeight.w700)),
+              ),
+              Expanded(
+                flex: 3,
+                child: Text('WIN RATE', textAlign: TextAlign.center, style: TextStyle(color: c.t3, fontSize: 10, fontWeight: FontWeight.w700)),
+              ),
+              Expanded(
+                flex: 4,
+                child: Text('EST. P&L', textAlign: TextAlign.end, style: TextStyle(color: c.t3, fontSize: 10, fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Divider(color: c.border, height: 1),
+          const SizedBox(height: 8),
+
+          // Table Rows
           ...cryptoSummaries.map((m) {
-            // pnl in monthly_summary is total cumulative %
             final pnlPct = m.pnl;
             final estMonthUsd = _capital * (pnlPct / 100);
             final isPos = estMonthUsd >= 0;
-            final monthStr = m.month.length >= 7 ? m.month.substring(0, 7) : m.month;
+            final monthStr = _formatMonth(m.month);
             final dollarStr = '${isPos ? '+' : '-'}\$${estMonthUsd.abs().toStringAsFixed(1)}';
 
             return Padding(
-              padding: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(vertical: 8),
               child: Row(
                 children: [
                   Expanded(
-                    flex: 3,
-                    child: Text(monthStr, style: TextStyle(color: c.t1, fontSize: 13, fontWeight: FontWeight.w600)),
+                    flex: 4,
+                    child: Text(
+                      monthStr,
+                      style: TextStyle(color: c.t1, fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
                   ),
                   Expanded(
                     flex: 3,
-                    child: Text('${m.wins}W / ${m.losses}L', style: TextStyle(color: c.t2, fontSize: 12)),
+                    child: Text(
+                      '${m.wins}W / ${m.losses}L',
+                      style: TextStyle(color: c.t2, fontSize: 12),
+                    ),
                   ),
                   Expanded(
                     flex: 3,
                     child: Text(
                       m.winRate != null ? '${m.winRate!.toStringAsFixed(0)}%' : '—',
+                      textAlign: TextAlign.center,
                       style: TextStyle(
                         color: (m.winRate ?? 0) >= 50 ? c.long : c.short,
                         fontSize: 12,
@@ -588,13 +930,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  Widget _buildShortsOverview(AppColors c, List<NewListingShort> shorts) {
+  // --- NEW LISTING SHORTS HERO CARD ---
+  Widget _buildShortsHeroCard(AppColors c, List<NewListingShort> shorts) {
     final closed = shorts.where((s) => s.result != ShortResult.pending).toList();
     final wins = closed.where((s) => s.result == ShortResult.win).length;
     final losses = closed.where((s) => s.result == ShortResult.loss).length;
     final winRate = closed.isNotEmpty ? (wins / closed.length) : 0.0;
 
-    // Cumulative % PnL
     double totalPnlPct = 0;
     for (final s in closed) {
       if (s.pnlPct != null) {
@@ -608,45 +950,154 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final avgDrop = closed.isNotEmpty ? (totalPnlPct / closed.length) : 0.0;
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
+        gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            isPos ? const Color(0xFF1E3A8A) : const Color(0xFF7F1D1D),
-            isPos ? const Color(0xFF2563EB) : const Color(0xFF991B1B),
-          ],
+          colors: [Color(0xFF1E3A8A), Color(0xFF1D4ED8), Color(0xFF2563EB)],
+          stops: [0.0, 0.5, 1.0],
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF2563EB).withValues(alpha: 0.35),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'NEW LISTING SHORTS (\$${_capital.toStringAsFixed(0)} CAPITAL)',
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 1.0),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            dollarStr,
-            style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.w900, letterSpacing: -1),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Cumulative PnL: ${totalPnlPct >= 0 ? '+' : ''}${totalPnlPct.toStringAsFixed(1)}% across ${closed.length} closed listing dumps',
-            style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 13),
-          ),
-          const SizedBox(height: 18),
-          Divider(color: Colors.white.withValues(alpha: 0.2)),
-          const SizedBox(height: 12),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _metricBlock('Win Rate', '${(winRate * 100).toStringAsFixed(1)}%'),
-              _metricBlock('Dumps Captured', '$wins'),
-              _metricBlock('Stopped Out', '$losses'),
-              _metricBlock('Avg Drop', '${avgDrop >= 0 ? '+' : ''}${avgDrop.toStringAsFixed(1)}%'),
+              Text(
+                'NEW LISTING SHORTS (PROJECTED)',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.7),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.8,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  'Based on \$${_capital.toStringAsFixed(0)} / trade',
+                  style: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.9),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // Big Dollar Figure
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                dollarStr,
+                style: TextStyle(
+                  color: isPos ? const Color(0xFF86EFAC) : const Color(0xFFFCA5A5),
+                  fontSize: 44,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -1.5,
+                  height: 1.0,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Profit (USD)',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.8),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      '${totalPnlPct >= 0 ? '+' : ''}${totalPnlPct.toStringAsFixed(1)}% cumulative',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.65),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Win Rate Indicator Bar
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Stack(
+              children: [
+                Container(
+                  height: 6,
+                  width: double.infinity,
+                  color: Colors.white.withValues(alpha: 0.15),
+                ),
+                FractionallySizedBox(
+                  widthFactor: winRate.clamp(0.0, 1.0),
+                  child: Container(
+                    height: 6,
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // 4 Stats Columns
+          Row(
+            children: [
+              _heroStat(
+                value: '${(winRate * 100).toStringAsFixed(0)}%',
+                label: 'Win Rate',
+                color: const Color(0xFF86EFAC),
+              ),
+              _heroStatDivider(),
+              _heroStat(
+                value: '$wins',
+                label: 'Captured',
+                color: const Color(0xFF86EFAC),
+              ),
+              _heroStatDivider(),
+              _heroStat(
+                value: '$losses',
+                label: 'Stopped Out',
+                color: const Color(0xFFFCA5A5),
+              ),
+              _heroStatDivider(),
+              _heroStat(
+                value: '${avgDrop >= 0 ? '+' : ''}${avgDrop.toStringAsFixed(1)}%',
+                label: 'Avg Drop',
+                color: Colors.white,
+              ),
             ],
           ),
         ],
@@ -654,9 +1105,15 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
+  // --- NEW LISTING SHORTS BREAKDOWN LIST ---
   Widget _buildShortsList(AppColors c, List<NewListingShort> shorts) {
     if (shorts.isEmpty) {
-      return Center(child: Text('No listing shorts recorded yet.', style: TextStyle(color: c.t3)));
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 24),
+          child: Text('No listing shorts recorded yet.', style: TextStyle(color: c.t3)),
+        ),
+      );
     }
 
     return Column(
@@ -664,7 +1121,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       children: [
         Text(
           'RECENT LISTING DUMPS',
-          style: TextStyle(color: c.t3, fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 0.8),
+          style: TextStyle(
+            color: c.t3,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            letterSpacing: 0.8,
+          ),
         ),
         const SizedBox(height: 10),
         ...shorts.take(8).map((s) {
@@ -690,28 +1152,43 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(s.symbol, style: TextStyle(color: c.t1, fontSize: 14, fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 2),
-                      Text('Entry: \$${s.entry.toStringAsFixed(4)}', style: TextStyle(color: c.t3, fontSize: 11)),
+                      Row(
+                        children: [
+                          Text(
+                            s.symbol,
+                            style: TextStyle(
+                              color: c.t1,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: (isPending ? c.gold : isWin ? c.long : c.short).withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              isPending ? 'ACTIVE' : isWin ? 'WON' : 'LOSS',
+                              style: TextStyle(
+                                color: isPending ? c.gold : isWin ? c.long : c.short,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Entry: \$${s.entry.toStringAsFixed(4)} · 28-33d post-listing dump',
+                        style: TextStyle(color: c.t3, fontSize: 11),
+                      ),
                     ],
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: (isPending ? c.gold : isWin ? c.long : c.short).withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    isPending ? 'ACTIVE' : isWin ? 'WON' : 'LOSS',
-                    style: TextStyle(
-                      color: isPending ? c.gold : isWin ? c.long : c.short,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 10),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -719,13 +1196,18 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                       isPending ? '—' : estUsdStr,
                       style: TextStyle(
                         color: pnl >= 0 ? c.long : c.short,
-                        fontSize: 14,
+                        fontSize: 15,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
+                    const SizedBox(height: 1),
                     Text(
                       isPending ? 'Pending' : pnlPctStr,
-                      style: TextStyle(color: c.t3, fontSize: 11),
+                      style: TextStyle(
+                        color: isPending ? c.t3 : (pnl >= 0 ? c.long : c.short),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ],
                 ),
@@ -735,5 +1217,19 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         }),
       ],
     );
+  }
+
+  String _formatMonth(String m) {
+    if (m.length < 7) return m;
+    final parts = m.split('-');
+    if (parts.length >= 2) {
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      final monthIdx = int.tryParse(parts[1]) ?? 0;
+      if (monthIdx >= 1 && monthIdx <= 12) {
+        return '${months[monthIdx - 1]} ${parts[0]}';
+      }
+      return '${parts[0]}-${parts[1]}';
+    }
+    return m;
   }
 }
