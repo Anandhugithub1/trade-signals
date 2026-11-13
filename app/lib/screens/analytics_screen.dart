@@ -122,7 +122,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  Widget _buildCapitalCard(AppColorTheme c) {
+  Widget _buildCapitalCard(AppColors c) {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
@@ -224,7 +224,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  Widget _buildMarketSelector(AppColorTheme c) {
+  Widget _buildMarketSelector(AppColors c) {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
@@ -261,7 +261,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     required String label,
     required IconData icon,
     required bool selected,
-    required AppColorTheme color,
+    required AppColors color,
     required VoidCallback onTap,
   }) {
     return GestureDetector(
@@ -297,7 +297,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  Widget _buildAlgoOverview(AppColorTheme c, List<TradeSignal> signals, List<MonthlySummaryRow> summaries) {
+  Widget _buildAlgoOverview(AppColors c, List<TradeSignal> signals, List<MonthlySummaryRow> summaries) {
     final stats = SignalStats.from(signals);
     final totalR = stats.totalR;
     // Each 1R with 2x leverage on capital = capital * 2 * target_risk (or ~capital * 5% risk = .50 per 1R)
@@ -396,7 +396,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  Widget _buildEngineBreakdown(AppColorTheme c, List<TradeSignal> signals) {
+  Widget _buildEngineBreakdown(AppColors c, List<TradeSignal> signals) {
     final a1Signals = signals.where((s) => s.strategy == 'donchian').toList();
     final a2Signals = signals.where((s) => s.strategy == 'algo2').toList();
     final a3Signals = signals.where((s) => s.strategy == 'algo3').toList();
@@ -441,7 +441,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     required String ratio,
     required List<TradeSignal> signals,
     required Color accentColor,
-    required AppColorTheme c,
+    required AppColors c,
   }) {
     final stats = SignalStats.from(signals);
     final totalR = stats.totalR;
@@ -506,7 +506,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  Widget _buildMonthlyTable(AppColorTheme c, List<MonthlySummaryRow> summaries, List<TradeSignal> signals) {
+  Widget _buildMonthlyTable(AppColors c, List<MonthlySummaryRow> summaries, List<TradeSignal> signals) {
     if (summaries.isEmpty) {
       return const SizedBox.shrink();
     }
@@ -580,7 +580,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  Widget _buildShortsOverview(AppColorTheme c, List<NewListingShort> shorts) {
+  Widget _buildShortsOverview(AppColors c, List<NewListingShort> shorts) {
     final closed = shorts.where((s) => s.result != ShortResult.pending).toList();
     final wins = closed.where((s) => s.result == ShortResult.win).length;
     final losses = closed.where((s) => s.result == ShortResult.loss).length;
@@ -644,7 +644,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     );
   }
 
-  Widget _buildShortsList(AppColorTheme c, List<NewListingShort> shorts) {
+  Widget _buildShortsList(AppColors c, List<NewListingShort> shorts) {
     if (shorts.isEmpty) {
       return Center(child: Text('No listing shorts recorded yet.', style: TextStyle(color: c.t3)));
     }
